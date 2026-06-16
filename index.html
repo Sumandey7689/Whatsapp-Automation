@@ -150,26 +150,68 @@
         }
         
         .qr-placeholder {
-            width: 220px;
-            height: 220px;
+            width: 240px;
+            height: 240px;
             margin: 0 auto;
-            background: #1e293b;
-            border-radius: 16px;
+            background: white;
+            border-radius: 20px;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            border: 2px dashed rgba(16, 185, 129, 0.3);
-            overflow: hidden;
+            border: 3px solid rgba(16, 185, 129, 0.2);
+            overflow: visible;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         }
         
         .qr-placeholder img {
             width: 100%;
             height: 100%;
             object-fit: contain;
+            display: block;
         }
         
         .qr-placeholder.loading {
             animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .qr-placeholder.loading .loading-spinner {
+            display: block;
+        }
+        
+        .qr-placeholder.loading .loading-text {
+            display: block;
+        }
+        
+        .loading-spinner {
+            display: none;
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(16, 185, 129, 0.2);
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            display: none;
+            margin-top: 15px;
+            font-size: 14px;
+            color: #10b981;
+            font-weight: 500;
+        }
+        
+        .qr-placeholder img {
+            display: none;
+        }
+        
+        .qr-placeholder:not(.loading) img {
+            display: block;
         }
         
         @keyframes pulse {
@@ -353,7 +395,9 @@
                 
                 <div class="qr-wrapper" id="qrWrapper">
                     <div class="qr-placeholder loading" id="qrPlaceholder">
-                        <img id="qrImage" alt="QR Code" style="display: none;">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text">Loading QR code...</div>
+                        <img id="qrImage" alt="QR Code">
                     </div>
                     <p class="qr-hint">Scan with WhatsApp to login<br>Open WhatsApp → Settings → Linked Devices → Link a Device</p>
                 </div>
@@ -449,12 +493,10 @@
                 
                 if (qrData.qrCode) {
                     qrImage.src = qrData.qrCode;
-                    qrImage.style.display = 'block';
                     qrPlaceholder.classList.remove('loading');
                     refreshBtn.style.display = 'block';
                 } else {
                     qrPlaceholder.classList.add('loading');
-                    qrImage.style.display = 'none';
                 }
                 
             } catch (error) {
@@ -497,7 +539,6 @@
         
         refreshBtn.addEventListener('click', () => {
             qrPlaceholder.classList.add('loading');
-            qrImage.style.display = 'none';
             getQRCode();
         });
         
