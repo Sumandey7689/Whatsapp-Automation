@@ -17,6 +17,11 @@ app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
+// Serve index.html at root
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 let browserContext = null;
 let page = null;
 let isLoggedIn = false;
@@ -101,6 +106,7 @@ async function checkLoginState() {
     return false;
   }
   try {
+    // Check if we're logged in by looking for chat interface
     const loggedInSelectors = [
       '[data-testid="chat-list"]',
       '#main',
@@ -108,6 +114,31 @@ async function checkLoginState() {
       '[data-testid="search-input"]'
     ];
     for (const selector of loggedInSelectors) {
+      try {
+        if (await page.locator(selector).isVisible({ timeout: 2000 })) {
+          return true;
+        }
+      } catch {}
+    }
+  } catch {}
+  return false;
+}
+
+async function isShowingQRCode() {
+  if (!page || !browserContext) {
+    return false;
+  }
+  try {
+    // Check if QR code is visible
+    const qrSelectors = [
+      'canvas',
+      '[data-testid="qr-code"] canvas',
+      'div canvas',
+      'img[alt*="QR"]',
+      '[data-testid*="qr"]',
+      'div[role="img"]'
+    ];
+    for (const selector of qrSelectors) {
       try {
         if (await page.locator(selector).isVisible({ timeout: 2000 })) {
           return true;
@@ -187,13 +218,29 @@ function startBackgroundLoop() {
     if (!page || !browserContext) {
       return;
     }
+    const wasLoggedIn = isLoggedIn;
     isLoggedIn = await checkLoginState();
+    
+    if (wasLoggedIn && !isLoggedIn) {
+      // Session expired!
+      console.log('⚠️ Session expired! Showing QR code for re-login.');
+    }
+    
     if (!isLoggedIn) {
       qrCodeBase64 = await getQRCodeBase64();
     } else {
       qrCodeBase64 = null;
+      
+      // Keep-alive: periodically interact with the page to prevent session timeout
+      try {
+        // Just scroll a little or interact to keep session alive
+        await page.evaluate(() => {
+          window.scrollBy(0, 1);
+          window.scrollBy(0, -1);
+        });
+      } catch {}
     }
-  }, 3000);
+  }, 10000); // Check every 10 seconds
 }
 
 // API to get QR code
@@ -325,10 +372,12 @@ app.post('/api/logout', async (req, res) => {
 
 // API to send messages
 app.post('/api/send-messages', async (req, res) => {
+  // Double-check login status before proceeding
+  isLoggedIn = await checkLoginState();
   if (!isLoggedIn) {
     return res.status(401).json({
       success: false,
-      message: 'Not logged in'
+      message: 'Not logged in. Session may have expired. Please re-login with QR code.'
     });
   }
 
