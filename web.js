@@ -1,3 +1,4 @@
+
 // Disable output buffering
 process.stdout._handle.setBlocking(true);
 
@@ -6,17 +7,58 @@ const {
 } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
+const cors = require('cors');
 
 console.log('🚀 Starting WhatsApp bot...');
 
-(async () => {
+const app = express();
+app.use(cors());
+app.use(express.json());
+const PORT = process.env.PORT || 3000;
+
+let browserContext = null;
+let page = null;
+let isLoggedIn = false;
+let qrCodeBase64 = null;
+
+// Try to close any popups (What's new, notifications, etc.)
+const popupSelectors = [
+  'button[aria-label="Close"]',
+  'div[role="button"][aria-label*="close" i]',
+  'svg[data-icon="x"]'
+];
+
+async function closePopups(targetPage) {
+  for (const selector of popupSelectors) {
+    try {
+      const popup = await targetPage.locator(selector).first();
+      if (await popup.isVisible({ timeout: 3000 })) {
+        await popup.click();
+        console.log('✅ Closed popup!');
+        await targetPage.waitForTimeout(1000);
+        break;
+      }
+    } catch {}
+  }
+}
+
+// Initialize browser and page
+async function initBrowser() {
   console.log('📱 Launching browser...');
-  const context = await chromium.launchPersistentContext('./wa-session', {
+  browserContext = await chromium.launchPersistentContext('./wa-session', {
     headless: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ]
   });
 
-  const page = await context.newPage();
+  page = await browserContext.newPage();
+  page.setDefaultTimeout(30000);
 
   // 👇 force visibility for headless
   await page.addInitScript(() => {
@@ -33,82 +75,272 @@ console.log('🚀 Starting WhatsApp bot...');
     });
   });
 
-  await page.goto('https://web.whatsapp.com/');
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(6000);
+  console.log('🌐 Navigating to WhatsApp Web...');
+  await page.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  console.log('⏳ Waiting for page to load...');
+  await page.waitForLoadState('networkidle', { timeout: 60000 });
+  await page.waitForTimeout(10000);
 
-  // Try to close any popups (What's new, notifications, etc.)
-  const popupSelectors = [
-    'button[aria-label="Close"]',
-    'div[role="button"][aria-label*="close" i]',
-    'svg[data-icon="x"]'
-  ];
+  console.log('📸 Taking initial screenshot...');
+  await page.screenshot({ path: '/app/initial-screenshot.png' });
 
-  for (const selector of popupSelectors) {
-    try {
-      const popup = await page.locator(selector).first();
-      if (await popup.isVisible({ timeout: 3000 })) {
-        await popup.click();
-        console.log('✅ Closed popup!');
-        await page.waitForTimeout(1000);
-        break;
-      }
-    } catch {}
+  await closePopups(page);
+
+  console.log('🔍 Checking initial login state...');
+  isLoggedIn = await checkLoginState();
+  if (isLoggedIn) {
+    console.log('♻️ Already logged in!');
   }
 
-  console.log('🔍 Checking login state...');
+  // Start background loop to check for QR code and update status
+  startBackgroundLoop();
+}
 
-  // ✅ safe login detection - skip interactive input, just wait for QR or logged in
-  let loggedIn = false;
-  for (let i = 0; i < 60; i++) {
-    try {
-      if (await page.locator('[data-testid="chat-list"]').isVisible()) {
-        loggedIn = true;
-        console.log('♻️ Already logged in!');
-        break;
-      }
-    } catch {}
-    await page.waitForTimeout(1000);
+async function checkLoginState() {
+  if (!page || !browserContext) {
+    return false;
   }
-
-  if (!loggedIn) {
-    console.log('⚠️ Login required! QR code screenshot saved to qr-code.png');
-    try {
-      await page.waitForSelector('canvas', { timeout: 30000 });
-      await page.waitForTimeout(3000);
-      await page.screenshot({ path: './qr-code.png', fullPage: true });
-    } catch (e) {
-      console.log('⚠️ Could not save QR code screenshot:', e.message);
-    }
-    
-    console.log('⏳ Waiting for login (scan QR code with WhatsApp)...');
-    
-    // Wait up to 5 minutes for manual login
-    for (let i = 0; i < 300; i++) {
+  try {
+    const loggedInSelectors = [
+      '[data-testid="chat-list"]',
+      '#main',
+      '[data-testid="conversation-panel"]',
+      '[data-testid="search-input"]'
+    ];
+    for (const selector of loggedInSelectors) {
       try {
-        if (await page.locator('[data-testid="chat-list"]').isVisible()) {
-          loggedIn = true;
-          console.log('✅ Login successful!');
+        if (await page.locator(selector).isVisible({ timeout: 2000 })) {
+          return true;
+        }
+      } catch {}
+    }
+  } catch {}
+  return false;
+}
+
+async function getQRCodeBase64() {
+  if (!page || !browserContext) {
+    return null;
+  }
+  try {
+    // Try multiple selectors for QR code canvas
+    const qrSelectors = [
+      'canvas',
+      '[data-testid="qr-code"] canvas',
+      'div canvas',
+      'img[alt*="QR"]',
+      '[data-testid*="qr"]',
+      'div[role="img"]'
+    ];
+    
+    let qrElement = null;
+    for (const selector of qrSelectors) {
+      try {
+        const locator = page.locator(selector).first();
+        if (await locator.isVisible({ timeout: 5000 })) {
+          qrElement = locator;
+          console.log(`✅ Found QR code with selector: ${selector}`);
           break;
         }
       } catch {}
-      await page.waitForTimeout(1000);
     }
-    
-    if (!loggedIn) {
-      console.log('❌ Login timeout! Exiting.');
-      await context.close();
-      process.exit(1);
+
+    if (!qrElement) {
+      console.log('⚠️ No QR code element found, taking screenshot...');
+      await page.screenshot({ path: '/app/debug-screenshot.png', fullPage: true });
+      console.log('📸 Screenshot saved to debug-screenshot.png');
+      return null;
     }
+
+    // Extract canvas data as base64
+    const base64 = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      if (canvas) {
+        return canvas.toDataURL('image/png');
+      }
+      // If no canvas, try img elements
+      const img = document.querySelector('img');
+      if (img && img.src) {
+        return img.src;
+      }
+      return null;
+    });
+
+    if (!base64) {
+      console.log('⚠️ Could not extract QR code data');
+      await page.screenshot({ path: '/app/qr-failed-screenshot.png' });
+    }
+
+    return base64;
+  } catch (e) {
+    console.log('❌ Error getting QR code:', e.message);
+    try {
+      await page.screenshot({ path: '/app/error-screenshot.png' });
+      console.log('📸 Error screenshot saved to error-screenshot.png');
+    } catch {}
+    return null;
+  }
+}
+
+function startBackgroundLoop() {
+  setInterval(async () => {
+    if (!page || !browserContext) {
+      return;
+    }
+    isLoggedIn = await checkLoginState();
+    if (!isLoggedIn) {
+      qrCodeBase64 = await getQRCodeBase64();
+    } else {
+      qrCodeBase64 = null;
+    }
+  }, 3000);
+}
+
+// API to get QR code
+app.post('/api/login-qr', async (req, res) => {
+  if (isLoggedIn) {
+    return res.json({
+      success: true,
+      loggedIn: true,
+      message: 'Already logged in'
+    });
   }
 
-  console.log('🚀 WhatsApp ready\n');
+  if (qrCodeBase64) {
+    return res.json({
+      success: true,
+      loggedIn: false,
+      qrCode: qrCodeBase64
+    });
+  }
 
-  const contactsPath = path.join(__dirname, 'contact.json');
-  const contacts = JSON.parse(fs.readFileSync(contactsPath, 'utf8'));
+  // Try to get QR code now
+  const qr = await getQRCodeBase64();
+  if (qr) {
+    qrCodeBase64 = qr;
+    return res.json({
+      success: true,
+      loggedIn: false,
+      qrCode: qr
+    });
+  }
 
-  console.log(`📋 Loaded ${contacts.length} contacts to send messages\n`);
+  return res.status(404).json({
+    success: false,
+    message: 'QR code not available yet'
+  });
+});
 
+// API to check login status
+app.post('/api/login-status', async (req, res) => {
+  isLoggedIn = await checkLoginState();
+  return res.json({
+    success: true,
+    loggedIn: isLoggedIn
+  });
+});
+
+// API to log out
+app.post('/api/logout', async (req, res) => {
+  try {
+    console.log('🔐 Logging out...');
+    
+    // Try to log out via WhatsApp Web UI first
+    try {
+      // Click the menu button (three dots)
+      const menuButton = page.locator('[aria-label="Menu"]').first();
+      if (await menuButton.isVisible({ timeout: 5000 })) {
+        await menuButton.click();
+        await page.waitForTimeout(1000);
+        
+        // Click "Log out"
+        const logoutButton = page.locator('text=Log out').first();
+        if (await logoutButton.isVisible({ timeout: 5000 })) {
+          await logoutButton.click();
+          await page.waitForTimeout(2000);
+          
+          // Confirm logout if needed
+          try {
+            const confirmButton = page.locator('text=Log out').nth(1).first();
+            if (await confirmButton.isVisible({ timeout: 3000 })) {
+              await confirmButton.click();
+              await page.waitForTimeout(2000);
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ Could not log out via UI, clearing session...');
+    }
+    
+    // Close browser context first to release locks on wa-session
+    console.log('🔌 Closing browser context...');
+    if (browserContext) {
+      await browserContext.close();
+      browserContext = null;
+      page = null;
+    }
+    
+    // Clear the persistent context by removing the wa-session directory
+    const fs = require('fs');
+    const path = require('path');
+    const sessionDir = path.join(__dirname, 'wa-session');
+    if (fs.existsSync(sessionDir)) {
+      // Retry a few times to make sure directory is released
+      let retries = 5;
+      while (retries > 0) {
+        try {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+          console.log('📁 Session directory cleared');
+          break;
+        } catch (e) {
+          console.log(`⚠️ Retry deleting session (${retries} left)...`);
+          retries--;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    
+    // Reset state
+    isLoggedIn = false;
+    qrCodeBase64 = null;
+    
+    // Reinitialize browser
+    console.log('🔄 Reinitializing browser...');
+    await initBrowser();
+    
+    return res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('❌ Logout error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to log out',
+      error: error.message
+    });
+  }
+});
+
+// API to send messages
+app.post('/api/send-messages', async (req, res) => {
+  if (!isLoggedIn) {
+    return res.status(401).json({
+      success: false,
+      message: 'Not logged in'
+    });
+  }
+
+  const { contacts } = req.body;
+  if (!contacts || !Array.isArray(contacts)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid contacts array'
+    });
+  }
+
+  const results = [];
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
     const targetPhone = contact.phone;
@@ -117,136 +349,140 @@ console.log('🚀 Starting WhatsApp bot...');
 
     console.log(`📤 [${i + 1}/${contacts.length}] Sending to ${targetPhone}...`);
 
-    let url;
-    if (attachment) {
-      url = `https://web.whatsapp.com/send?phone=${targetPhone}`;
-    } else {
-      url = `https://web.whatsapp.com/send?phone=${targetPhone}&text=${encodeURIComponent(message)}`;
-    }
-    await page.goto(url);
-
     try {
-      await page.waitForLoadState('domcontentloaded');
-      await page.waitForLoadState('networkidle');
-      await page.waitForTimeout(10000);
+      // Navigate to WhatsApp Web chat for this contact
+      const url = `https://web.whatsapp.com/send?phone=${targetPhone}`;
+      console.log(`   Navigating to: ${url}`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      // Close any popups (What's new, notifications, etc.)
-      for (const selector of popupSelectors) {
-        try {
-          const popup = await page.locator(selector).first();
-          if (await popup.isVisible({ timeout: 3000 })) {
-            await popup.click();
-            console.log('✅ Closed popup!');
-            await page.waitForTimeout(1000);
-            break;
-          }
-        } catch {}
-      }
+      // Wait for WhatsApp Web to process and load
+      await page.waitForTimeout(5000);
+      
+      // Close any popups
+      await closePopups(page);
 
-      // Debug screenshot
-      try {
-        await page.screenshot({ path: `debug-navigate-${targetPhone}.png` });
-        console.log(`📸 Debug screenshot saved to debug-navigate-${targetPhone}.png`);
-      } catch {}
-
+      // Check for invalid number
       const invalid = await page.locator('text=Phone number shared via url is invalid')
-        .isVisible()
+        .isVisible({ timeout: 3000 })
         .catch(() => false);
 
       if (invalid) {
+        results.push({ phone: targetPhone, success: false, error: 'Invalid number' });
         console.log(`❌ Invalid number: ${targetPhone}\n`);
         continue;
       }
 
-      // Wait for either chat panel OR message input box
-      let readyToSend = false;
-      const selectors = [
-        '[data-testid="conversation-panel-messages"]',
-        '#main',
-        '[data-testid="conversation-panel"]',
-        'div[role="main"]',
-        'div[contenteditable="true"]'
+      // Wait for chat to load - try multiple strategies
+      console.log(`   Waiting for chat to load...`);
+      let chatLoaded = false;
+      const waitStrategies = [
+        { selector: 'div[contenteditable="true"]', timeout: 15000 },
+        { selector: '[data-testid="conversation-panel"]', timeout: 10000 },
+        { selector: '#main', timeout: 10000 }
       ];
 
-      for (const selector of selectors) {
+      for (const strategy of waitStrategies) {
         try {
-          await page.waitForSelector(selector, { timeout: 10000 });
-          readyToSend = true;
-          console.log(`✅ Page ready using selector: ${selector}`);
+          await page.waitForSelector(strategy.selector, { timeout: strategy.timeout });
+          chatLoaded = true;
+          console.log(`   ✓ Chat loaded (strategy: ${strategy.selector})`);
           break;
         } catch (e) {
-          console.log(`⚠️ Selector ${selector} failed, trying next...`);
+          console.log(`   ✗ Strategy failed: ${strategy.selector}`);
         }
       }
 
-      if (!readyToSend) {
-        console.log(`❌ Could not detect page ready for ${targetPhone}, taking screenshot...`);
-        try {
-          await page.screenshot({ path: `error-page-load-${targetPhone}.png` });
-          console.log(`📸 Screenshot saved to error-page-load-${targetPhone}.png`);
-        } catch {}
+      if (!chatLoaded) {
+        await page.screenshot({ path: `/app/chat-failed-${targetPhone}.png` });
+        results.push({ phone: targetPhone, success: false, error: 'Could not load chat' });
+        console.log(`❌ Could not load chat: ${targetPhone}\n`);
         continue;
       }
 
+      // Handle attachment if present
       if (attachment) {
         const fullPath = path.resolve(__dirname, attachment);
-        
         if (!fs.existsSync(fullPath)) {
+          results.push({ phone: targetPhone, success: false, error: 'File not found' });
           console.log(`❌ File not found: ${fullPath}`);
           continue;
         }
 
-        console.log(`📁 Uploading file: ${fullPath}`);
+        console.log(`   📁 Uploading file: ${fullPath}`);
+        const attachButton = page.locator('[data-testid="attach"]').first();
+        try {
+          await attachButton.click({ timeout: 10000 });
+        } catch {}
+
+        // Look for file input
         const fileInput = page.locator('input[type="file"]').first();
-        await fileInput.setInputFiles(fullPath);
-        await page.waitForTimeout(6000);
-
-        if (message) {
-          const allInputs = page.locator('div[contenteditable="true"]');
-          const count = await allInputs.count();
-          
-          for (let j = 0; j < count; j++) {
-            const input = allInputs.nth(j);
-            try {
-              await input.waitFor({ timeout: 3000 });
-              await input.click();
-              await page.waitForTimeout(300);
-              await input.fill(message);
-              await page.waitForTimeout(500);
-              break;
-            } catch {}
-          }
+        try {
+          await fileInput.setInputFiles(fullPath, { timeout: 15000 });
+        } catch (e) {
+          console.log(`   File upload failed, trying alternative method...`);
         }
+        await page.waitForTimeout(5000);
 
-        await page.keyboard.press('Enter');
+        // Add message if present
+        if (message) {
+          console.log(`   Typing message...`);
+          const messageInput = page.locator('div[contenteditable="true"]').first();
+          await messageInput.waitFor({ timeout: 10000 });
+          await messageInput.click();
+          await page.waitForTimeout(500);
+          await messageInput.fill(message);
+          await page.waitForTimeout(1000);
+        }
       } else {
-        const inputBox = page.locator('div[contenteditable="true"]').first();
-        await inputBox.waitFor({
-          timeout: 20000
-        });
-
-        await inputBox.click();
+        // Just text message
+        console.log(`   Typing message...`);
+        const messageInput = page.locator('div[contenteditable="true"]').first();
+        await messageInput.waitFor({ timeout: 10000 });
+        await messageInput.click();
         await page.waitForTimeout(500);
-
-        await inputBox.focus();
-        await page.waitForTimeout(200);
-
-        await page.keyboard.press('Enter');
+        await messageInput.fill(message);
+        await page.waitForTimeout(1000);
       }
 
-      console.log(`✅ Sent to ${targetPhone}\n`);
+      // Press Enter to send
+      console.log(`   Sending...`);
+      await page.keyboard.press('Enter');
       await page.waitForTimeout(4000);
+
+      results.push({ phone: targetPhone, success: true });
+      console.log(`✅ Sent to ${targetPhone}\n`);
+
     } catch (err) {
-      console.log(`❌ Failed for ${targetPhone}`);
-      console.log('Reason:', err.message, '\n');
-      // Take screenshot for debugging
+      console.error(`❌ Failed for ${targetPhone}:`, err.message);
       try {
-        await page.screenshot({ path: `error-${targetPhone}.png` });
-        console.log(`📸 Screenshot saved to error-${targetPhone}.png`);
+        await page.screenshot({ path: `/app/error-${targetPhone}.png` });
       } catch {}
+      results.push({ phone: targetPhone, success: false, error: err.message });
+    }
+
+    // Add delay between messages to avoid being rate-limited
+    if (i < contacts.length - 1) {
+      await page.waitForTimeout(3000);
     }
   }
 
-  console.log('🎉 All messages sent!');
+  return res.json({
+    success: true,
+    results
+  });
+});
 
+// Start server after browser initialization
+(async () => {
+  await initBrowser();
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+    console.log(`   APIs available:`);
+    console.log(`   - POST /api/login-qr    : Get QR code for login`);
+    console.log(`   - POST /api/login-status: Check login status`);
+    console.log(`   - POST /api/logout      : Log out of WhatsApp`);
+    console.log(`   - POST /api/send-messages: Send bulk messages`);
+  });
 })();
+

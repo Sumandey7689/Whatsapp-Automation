@@ -2,6 +2,8 @@ services:
   whatsapp-bot:
     build: .
     container_name: whatsapp-bot
+    ports:
+      - "3000:3000"
     volumes:
       - ./wa-session:/app/wa-session
       - ./contact.json:/app/contact.json

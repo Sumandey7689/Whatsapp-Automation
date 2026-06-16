@@ -9,5 +9,5 @@ COPY . .
 
 # No need to install xvfb separately - it's already in the Playwright image
 
-# Run the script
-CMD ["xvfb-run", "-a", "node", "web.js"]
+# Run the script with xvfb
+CMD ["sh", "-c", "xvfb-run -a node web.js"]
