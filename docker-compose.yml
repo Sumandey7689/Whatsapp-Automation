@@ -1,0 +1,12 @@
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-bot
+    volumes:
+      - ./wa-session:/app/wa-session
+      - ./contact.json:/app/contact.json
+      - ./attachments:/app/attachments
+      - ./:/app  # Mount entire directory to get screenshots
+    stdin_open: true
+    tty: true
+    shm_size: "2gb"

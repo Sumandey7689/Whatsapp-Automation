@@ -1,0 +1,37 @@
+
+# Node modules
+node_modules/
+
+# WhatsApp session (contains sensitive login data)
+wa-session/
+
+# Debug screenshots
+*.png
+!qr-code*.png  # Keep QR code if needed, but usually should ignore too
+debug-*.png
+error-*.png
+
+# Log files
+*.log
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
