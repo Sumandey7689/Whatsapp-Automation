@@ -8,7 +8,7 @@ services:
       - ./wa-session:/app/wa-session
       - ./contact.json:/app/contact.json
       - ./attachments:/app/attachments
-      - ./:/app  # Mount entire directory to get screenshots
+      # Don't mount entire /app - that overwrites the built files!
     stdin_open: true
     tty: true
     shm_size: "2gb"
