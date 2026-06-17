@@ -8,6 +8,7 @@ services:
       - ./wa-session:/app/wa-session
       - ./contact.json:/app/contact.json
       - ./attachments:/app/attachments
+      - ./logs:/app/logs # Mount logs folder to host machine
       # Don't mount entire /app - that overwrites the built files!
     stdin_open: true
     tty: true

@@ -27,6 +27,28 @@ let page = null;
 let isLoggedIn = false;
 let qrCodeBase64 = null;
 let isSendingMessages = false;
+let isLoggingOut = false;
+
+// Helper function to take screenshots
+async function takeDebugScreenshot(targetPage, label) {
+  try {
+    // Create logs directory if it doesn't exist
+    const fs = require('fs');
+    const path = require('path');
+    const logsDir = path.join(__dirname, 'logs');
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+
+    // Create latest filename
+    const latestFilename = path.join(logsDir, 'latest.png');
+    
+    // Take screenshot and save directly to latest.png (overwrite each time)
+    await targetPage.screenshot({ path: latestFilename, fullPage: true });
+  } catch (err) {
+    console.log(`⚠️ Could not take debug screenshot (${label}):`, err.message);
+  }
+}
 
 // Try to close any popups (What's new, notifications, etc.)
 const popupSelectors = [
@@ -103,21 +125,31 @@ async function initBrowser() {
 
   console.log('🌐 Navigating to WhatsApp Web...');
   await page.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  
+  await takeDebugScreenshot(page, 'after-goto-domcontentloaded');
+  
   console.log('⏳ Waiting for page to load...');
   await page.waitForLoadState('networkidle', { timeout: 60000 });
+  
+  await takeDebugScreenshot(page, 'after-networkidle');
+  
   await page.waitForTimeout(5000); // Reduced from 10 seconds
-
-  console.log('📸 Taking initial screenshot...');
-  await page.screenshot({ path: '/app/initial-screenshot.png' });
+  
+  await takeDebugScreenshot(page, 'before-popup-close');
 
   // Try closing popups multiple times
   for (let i = 0; i < 3; i++) {
     const closed = await closePopups(page);
     if (closed) await page.waitForTimeout(1000);
   }
+  
+  await takeDebugScreenshot(page, 'after-popup-close');
 
   console.log('🔍 Checking initial login state...');
   isLoggedIn = await checkLoginState();
+  
+  await takeDebugScreenshot(page, `login-state-${isLoggedIn ? 'logged-in' : 'logged-out'}`);
+  
   if (isLoggedIn) {
     console.log('♻️ Already logged in!');
   }
@@ -203,8 +235,7 @@ async function getQRCodeBase64() {
 
     if (!qrElement) {
       console.log('⚠️ No QR code element found, taking screenshot...');
-      await page.screenshot({ path: '/app/debug-screenshot.png', fullPage: true });
-      console.log('📸 Screenshot saved to debug-screenshot.png');
+      await takeDebugScreenshot(page, 'qrcode-not-found');
       return null;
     }
 
@@ -224,15 +255,14 @@ async function getQRCodeBase64() {
 
     if (!base64) {
       console.log('⚠️ Could not extract QR code data');
-      await page.screenshot({ path: '/app/qr-failed-screenshot.png' });
+      await takeDebugScreenshot(page, 'qrcode-extraction-failed');
     }
 
     return base64;
   } catch (e) {
     console.log('❌ Error getting QR code:', e.message);
     try {
-      await page.screenshot({ path: '/app/error-screenshot.png' });
-      console.log('📸 Error screenshot saved to error-screenshot.png');
+      await takeDebugScreenshot(page, 'qrcode-error');
     } catch {}
     return null;
   }
@@ -311,9 +341,6 @@ app.post('/api/login-status', async (req, res) => {
     loggedIn: isLoggedIn
   });
 });
-
-// Add a flag to pause the background loop
-let isLoggingOut = false;
 
 // API to log out
 app.post('/api/logout', async (req, res) => {
@@ -419,6 +446,8 @@ app.post('/api/send-messages', async (req, res) => {
           // Try native UI first
           console.log(`   Trying native UI first...`);
           
+          await takeDebugScreenshot(page, `send-native-start-${targetPhone}`);
+          
           // Step 1: Find and click the search box - try multiple selectors
           console.log(`   Finding search box...`);
           let searchBox = null;
@@ -441,11 +470,14 @@ app.post('/api/send-messages', async (req, res) => {
           }
           
           if (!searchBox) {
+            await takeDebugScreenshot(page, `send-native-search-fail-${targetPhone}`);
             throw new Error('Could not find search box');
           }
           
           await searchBox.click();
           await page.waitForTimeout(500);
+          
+          await takeDebugScreenshot(page, `send-native-after-search-click-${targetPhone}`);
           
           // Step 2: Clear any existing text and type the phone number
           await page.keyboard.press('Control+A');
@@ -454,6 +486,8 @@ app.post('/api/send-messages', async (req, res) => {
           await page.waitForTimeout(200);
           await searchBox.fill(targetPhone);
           await page.waitForTimeout(1500);
+          
+          await takeDebugScreenshot(page, `send-native-after-type-phone-${targetPhone}`);
           
           // Step 3: Wait for contact to appear and click it
           console.log(`   Looking for contact...`);
@@ -477,18 +511,22 @@ app.post('/api/send-messages', async (req, res) => {
           
           if (!contactResult) {
             console.log(`   Taking screenshot for debugging native UI failure...`);
-            await page.screenshot({ path: `/app/native-ui-fail-${targetPhone}.png`, fullPage: true });
+            await takeDebugScreenshot(page, `send-native-contact-fail-${targetPhone}`);
             throw new Error('Could not find contact');
           }
           
           await contactResult.click();
           console.log(`   ✓ Contact selected`);
           
+          await takeDebugScreenshot(page, `send-native-after-contact-select-${targetPhone}`);
+          
           // Step 4: Wait for chat to load
           console.log(`   Waiting for chat to load...`);
           const messageInput = page.locator('div[contenteditable="true"]').first();
           await messageInput.waitFor({ timeout: 10000 });
           console.log(`   ✓ Chat loaded`);
+          
+          await takeDebugScreenshot(page, `send-native-chat-loaded-${targetPhone}`);
           
           // Close any popups just in case
           await closePopups(page);
@@ -533,11 +571,15 @@ app.post('/api/send-messages', async (req, res) => {
             await messageInput.fill(message);
             await page.waitForTimeout(500);
           }
+          
+          await takeDebugScreenshot(page, `send-native-before-send-${targetPhone}`);
 
           // Press Enter to send
           console.log(`   Sending...`);
           await page.keyboard.press('Enter');
           await page.waitForTimeout(2000);
+          
+          await takeDebugScreenshot(page, `send-native-after-send-${targetPhone}`);
 
           results.push({ phone: targetPhone, success: true });
           console.log(`✅ Sent to ${targetPhone}\n`);
@@ -551,10 +593,14 @@ app.post('/api/send-messages', async (req, res) => {
           // Fallback to send URL method
           console.log(`   Using send URL fallback...`);
           
+          await takeDebugScreenshot(page, `send-fallback-start-${targetPhone}`);
+          
           // Navigate to WhatsApp Web chat for this contact
           const url = `https://web.whatsapp.com/send?phone=${targetPhone}`;
           console.log(`   Navigating to: ${url}`);
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+          
+          await takeDebugScreenshot(page, `send-fallback-after-goto-${targetPhone}`);
 
           // Wait for WhatsApp Web to process and load
           await page.waitForTimeout(2000);
@@ -564,6 +610,8 @@ app.post('/api/send-messages', async (req, res) => {
             const closed = await closePopups(page);
             if (closed) await page.waitForTimeout(1000);
           }
+          
+          await takeDebugScreenshot(page, `send-fallback-after-popup-close-${targetPhone}`);
 
           // Check for invalid number
           const invalid = await page.locator('text=Phone number shared via url is invalid')
@@ -571,6 +619,7 @@ app.post('/api/send-messages', async (req, res) => {
             .catch(() => false);
 
           if (invalid) {
+            await takeDebugScreenshot(page, `send-fallback-invalid-number-${targetPhone}`);
             results.push({ phone: targetPhone, success: false, error: 'Invalid number' });
             console.log(`❌ Invalid number: ${targetPhone}\n`);
             continue;
@@ -597,11 +646,13 @@ app.post('/api/send-messages', async (req, res) => {
           }
 
           if (!chatLoaded) {
-            await page.screenshot({ path: `/app/chat-failed-${targetPhone}.png` });
+            await takeDebugScreenshot(page, `send-fallback-chat-fail-${targetPhone}`);
             results.push({ phone: targetPhone, success: false, error: 'Could not load chat' });
             console.log(`❌ Could not load chat: ${targetPhone}\n`);
             continue;
           }
+          
+          await takeDebugScreenshot(page, `send-fallback-chat-loaded-${targetPhone}`);
 
           const messageInput = page.locator('div[contenteditable="true"]').first();
 
@@ -647,11 +698,15 @@ app.post('/api/send-messages', async (req, res) => {
             await messageInput.fill(message);
             await page.waitForTimeout(1000);
           }
+          
+          await takeDebugScreenshot(page, `send-fallback-before-send-${targetPhone}`);
 
           // Press Enter to send
           console.log(`   Sending...`);
           await page.keyboard.press('Enter');
           await page.waitForTimeout(4000);
+          
+          await takeDebugScreenshot(page, `send-fallback-after-send-${targetPhone}`);
 
           results.push({ phone: targetPhone, success: true });
           console.log(`✅ Sent to ${targetPhone}\n`);
@@ -660,7 +715,7 @@ app.post('/api/send-messages', async (req, res) => {
       } catch (err) {
         console.error(`❌ Failed for ${targetPhone}:`, err.message);
         try {
-          await page.screenshot({ path: `/app/error-${targetPhone}.png` });
+          await takeDebugScreenshot(page, `send-error-${targetPhone}`);
         } catch {}
         results.push({ phone: targetPhone, success: false, error: err.message });
       }
