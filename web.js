@@ -29,6 +29,67 @@ let qrCodeBase64 = null;
 let isSendingMessages = false;
 let isLoggingOut = false;
 
+// Helper function to download file from URL
+async function downloadFileFromUrl(url) {
+  const fs = require('fs');
+  const path = require('path');
+  const https = require('https');
+  const http = require('http');
+  
+  // Create temp directory if it doesn't exist
+  const tempDir = path.join(__dirname, 'temp');
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  
+  // Extract filename from URL or use random name
+  let filename;
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    filename = path.basename(pathname);
+    // If filename is empty or just '/', use random name
+    if (!filename || filename === '/') {
+      throw new Error('No filename in URL');
+    }
+  } catch {
+    // Generate random filename
+    const timestamp = Date.now();
+    filename = `download-${timestamp}.tmp`;
+  }
+  
+  const filePath = path.join(tempDir, filename);
+  
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    
+    protocol.get(url, (response) => {
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        // Follow redirect
+        return downloadFileFromUrl(response.headers.location)
+          .then(resolve)
+          .catch(reject);
+      }
+      
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Failed to download file: ${response.statusCode}`));
+      }
+      
+      const fileStream = fs.createWriteStream(filePath);
+      response.pipe(fileStream);
+      
+      fileStream.on('finish', () => {
+        fileStream.close();
+        resolve(filePath);
+      });
+      
+      fileStream.on('error', (err) => {
+        fs.unlink(filePath, () => reject(err));
+      });
+    }).on('error', reject);
+  });
+}
+
 // Helper function to take screenshots
 async function takeDebugScreenshot(targetPage, label) {
   try {
@@ -47,6 +108,58 @@ async function takeDebugScreenshot(targetPage, label) {
     await targetPage.screenshot({ path: latestFilename, fullPage: true });
   } catch (err) {
     console.log(`⚠️ Could not take debug screenshot (${label}):`, err.message);
+  }
+}
+
+// Smart wait for attachment upload to complete
+async function waitForAttachmentUpload(targetPage) {
+  try {
+    // Wait for upload progress or file preview to appear
+    const previewSelectors = [
+      '[data-testid="media-editor"]',
+      'img[src*="blob"]',
+      'div[role="img"]',
+      'canvas[style*="background-image"]'
+    ];
+    
+    for (const sel of previewSelectors) {
+      try {
+        await targetPage.locator(sel).waitFor({ timeout: 10000 });
+        console.log('   ✅ Attachment preview visible');
+        return true;
+      } catch {}
+    }
+    
+    // If no preview, just wait a reasonable time
+    await targetPage.waitForTimeout(2000);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Smart wait for message to be sent
+async function waitForMessageSent(targetPage) {
+  try {
+    // Wait for single or double checkmarks
+    const checkMarkSelectors = [
+      '[data-testid="msg-dblcheck"]',
+      '[data-testid="msg-check"]'
+    ];
+    
+    for (const sel of checkMarkSelectors) {
+      try {
+        await targetPage.locator(sel).last().waitFor({ timeout: 3000 });
+        console.log('   ✅ Message sent checkmark visible');
+        return true;
+      } catch {}
+    }
+    
+    // Fallback: small wait
+    await targetPage.waitForTimeout(1000);
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -76,16 +189,16 @@ async function closePopups(targetPage) {
         
         for (let i = 0; i < count; i++) {
           const el = elements.nth(i);
-          if (await el.isVisible({ timeout: 1500 })) {
+          if (await el.isVisible({ timeout: 1000 })) {
             await el.click();
             closedAny = true;
             console.log(`✅ Closed popup! (selector: ${selector})`);
-            await targetPage.waitForTimeout(500);
+            await targetPage.waitForTimeout(100);
           }
         }
       } catch {}
     }
-    if (closedAny) await targetPage.waitForTimeout(1000);
+    if (closedAny) await targetPage.waitForTimeout(300);
   }
   
   return closedAny;
@@ -95,7 +208,7 @@ async function closePopups(targetPage) {
 async function initBrowser() {
   console.log('📱 Launching browser...');
   browserContext = await chromium.launchPersistentContext('./wa-session', {
-    headless: true,
+    headless: false,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     args: [
       '--no-sandbox',
@@ -133,14 +246,28 @@ async function initBrowser() {
   
   await takeDebugScreenshot(page, 'after-networkidle');
   
-  await page.waitForTimeout(5000); // Reduced from 10 seconds
+  // Wait for either QR code or chat list to be visible
+  const initialLoadSelectors = [
+    '[data-testid="qr-code"]',
+    '[data-testid="chat-list"]',
+    'canvas',
+    '#main'
+  ];
+  let pageLoaded = false;
+  for (const sel of initialLoadSelectors) {
+    try {
+      await page.locator(sel).waitFor({ timeout: 5000 });
+      pageLoaded = true;
+      break;
+    } catch {}
+  }
   
   await takeDebugScreenshot(page, 'before-popup-close');
 
   // Try closing popups multiple times
   for (let i = 0; i < 3; i++) {
     const closed = await closePopups(page);
-    if (closed) await page.waitForTimeout(1000);
+    if (closed) await page.waitForTimeout(500);
   }
   
   await takeDebugScreenshot(page, 'after-popup-close');
@@ -368,7 +495,7 @@ app.post('/api/logout', async (req, res) => {
       let retries = 3;
       while (retries > 0) {
         try {
-          fs.rmSync(sessionDir, { recursive: true, force: true });
+          fs.rmSync(sessionDir, {recursive: true, force: true});
           console.log('📁 Session directory cleared');
           break;
         } catch (e) {
@@ -439,6 +566,11 @@ app.post('/api/send-messages', async (req, res) => {
 
       console.log(`📤 [${i + 1}/${contacts.length}] Sending to ${targetPhone}...`);
       await closePopups(page);
+      
+      // Initialize variables for attachment handling
+      let attachmentPath = null;
+      let isTemporaryFile = false;
+      
       try {
         let usedNativeUI = false;
         
@@ -448,24 +580,22 @@ app.post('/api/send-messages', async (req, res) => {
           
           await takeDebugScreenshot(page, `send-native-start-${targetPhone}`);
           
-          // Step 1: Find and click the search box - try multiple selectors
+          // Step 1: Find and click the search box - wait properly!
           console.log(`   Finding search box...`);
           let searchBox = null;
           const searchSelectors = [
             '[data-testid="search-input"]',
             '[title*="Search"]',
-            '[placeholder*="Search"]',
-            '[contenteditable="true"]:first-of-type'
+            '[placeholder*="Search"]'
           ];
           
           for (const sel of searchSelectors) {
             try {
               const loc = page.locator(sel).first();
-              if (await loc.isVisible({ timeout: 2000 })) {
-                searchBox = loc;
-                console.log(`   ✓ Found search box with selector: ${sel}`);
-                break;
-              }
+              await loc.waitFor({ state: 'visible', timeout: 3000 });
+              searchBox = loc;
+              console.log(`   ✓ Found search box with selector: ${sel}`);
+              break;
             } catch {}
           }
           
@@ -475,16 +605,17 @@ app.post('/api/send-messages', async (req, res) => {
           }
           
           await searchBox.click();
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(300);
           
           await takeDebugScreenshot(page, `send-native-after-search-click-${targetPhone}`);
           
           // Step 2: Clear any existing text and type the phone number
           await page.keyboard.press('Control+A');
-          await page.waitForTimeout(200);
+          await page.waitForTimeout(150);
           await page.keyboard.press('Backspace');
-          await page.waitForTimeout(200);
+          await page.waitForTimeout(150);
           await searchBox.fill(targetPhone);
+          // Wait for search results properly!
           await page.waitForTimeout(1500);
           
           await takeDebugScreenshot(page, `send-native-after-type-phone-${targetPhone}`);
@@ -501,11 +632,10 @@ app.post('/api/send-messages', async (req, res) => {
           for (const sel of contactSelectors) {
             try {
               const loc = page.locator(sel).first();
-              if (await loc.isVisible({ timeout: 2000 })) {
-                contactResult = loc;
-                console.log(`   ✓ Found contact with selector: ${sel}`);
-                break;
-              }
+              await loc.waitFor({ state: 'visible', timeout: 5000 });
+              contactResult = loc;
+              console.log(`   ✓ Found contact with selector: ${sel}`);
+              break;
             } catch {}
           }
           
@@ -523,7 +653,7 @@ app.post('/api/send-messages', async (req, res) => {
           // Step 4: Wait for chat to load
           console.log(`   Waiting for chat to load...`);
           const messageInput = page.locator('div[contenteditable="true"]').first();
-          await messageInput.waitFor({ timeout: 10000 });
+          await messageInput.waitFor({ timeout: 15000 });
           console.log(`   ✓ Chat loaded`);
           
           await takeDebugScreenshot(page, `send-native-chat-loaded-${targetPhone}`);
@@ -533,43 +663,119 @@ app.post('/api/send-messages', async (req, res) => {
 
           // Handle attachment if present
           if (attachment) {
-            const fullPath = path.resolve(__dirname, attachment);
-            if (!fs.existsSync(fullPath)) {
-              results.push({ phone: targetPhone, success: false, error: 'File not found' });
-              console.log(`❌ File not found: ${fullPath}`);
-              continue;
+            // Download only if not already downloaded
+            if (!attachmentPath) {
+              if (attachment.startsWith('http://') || attachment.startsWith('https://')) {
+                console.log(`   🌐 Downloading file from URL: ${attachment}`);
+                attachmentPath = await downloadFileFromUrl(attachment);
+                isTemporaryFile = true;
+                console.log(`   ✅ File downloaded to: ${attachmentPath}`);
+              } else {
+                // Local file
+                attachmentPath = path.resolve(__dirname, attachment);
+                if (!fs.existsSync(attachmentPath)) {
+                  results.push({ phone: targetPhone, success: false, error: 'File not found' });
+                  console.log(`❌ File not found: ${attachmentPath}`);
+                  continue;
+                }
+              }
             }
 
-            console.log(`   📁 Uploading file: ${fullPath}`);
-            const attachButton = page.locator('[data-testid="attach"]').first();
-            try {
-              await attachButton.click({ timeout: 10000 });
-            } catch {}
-
-            // Look for file input
-            const fileInput = page.locator('input[type="file"]').first();
-            try {
-              await fileInput.setInputFiles(fullPath, { timeout: 15000 });
-            } catch (e) {
-              console.log(`   File upload failed, trying alternative method...`);
+            console.log(`   📁 Uploading file: ${attachmentPath}`);
+            await takeDebugScreenshot(page, `before-attach-${targetPhone}`);
+            
+            // Step 1: Click Attach button
+            const attachButton = page.locator('button[aria-label="Attach"]').first();
+            await attachButton.waitFor({ state: 'visible', timeout: 10000 });
+            await attachButton.click({ timeout: 10000 });
+            console.log(`   ✅ Clicked Attach button`);
+            await page.waitForTimeout(1500);
+            await takeDebugScreenshot(page, `after-attach-click-${targetPhone}`);
+            
+            // Step 2: Find all buttons in menu and only click Document!
+            const menuButtons = page.locator('div[role="listitem"] button, button[role="menuitem"]');
+            const count = await menuButtons.count();
+            console.log(`   Found ${count} menu buttons`);
+            
+            let documentClicked = false;
+            for (let i = 0; i < count; i++) {
+              const text = await menuButtons.nth(i).innerText({ timeout: 2000 }).catch(() => '');
+              console.log(`   Button ${i} text: ${text}`);
+              if (text.includes('Document')) {
+                await menuButtons.nth(i).click({ timeout: 5000 });
+                documentClicked = true;
+                console.log(`   ✅ Clicked Document button!`);
+                break;
+              }
             }
+            
+            if (!documentClicked) {
+              throw new Error('Could not find Document button in menu');
+            }
+            
+            await page.waitForTimeout(2500);
+            await takeDebugScreenshot(page, `after-document-click-${targetPhone}`);
+            
+            // Step 3: Find file input for DOCUMENTS (skip media ones)
+            let fileInputFound = false;
+            let fileInputs = await page.locator('input[type="file"]').all();
+            console.log(`   Found ${fileInputs.length} file inputs`);
+            
+            for (let i = fileInputs.length - 1; i >= 0; i--) {
+              try {
+                const accept = await fileInputs[i].getAttribute('accept');
+                console.log(`   File input ${i} accept: ${accept}`);
+                // Skip inputs that only accept media types!
+                if (accept && (accept.includes('image') || accept.includes('video') || accept.includes('audio'))) {
+                  console.log(`   Skipping media file input ${i}`);
+                  continue;
+                }
+                await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
+                fileInputFound = true;
+                console.log(`   ✅ Attached using file input #${i}`);
+                break;
+              } catch {}
+            }
+            
+            // If no non-media file input found, try all!
+            if (!fileInputFound) {
+              console.log(`   Trying all file inputs`);
+              for (let i = fileInputs.length - 1; i >= 0; i--) {
+                try {
+                  await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
+                  fileInputFound = true;
+                  console.log(`   ✅ Attached using file input #${i}`);
+                  break;
+                } catch {}
+              }
+            }
+            
+            if (!fileInputFound) {
+              throw new Error('Could not attach file');
+            }
+            
             await page.waitForTimeout(3000);
-
+            await takeDebugScreenshot(page, `after-attach-${targetPhone}`);
+            
             // Add message if present
             if (message) {
               console.log(`   Typing message...`);
-              await messageInput.click();
-              await page.waitForTimeout(500);
-              await messageInput.fill(message);
-              await page.waitForTimeout(500);
+              try {
+                await messageInput.fill(message);
+              } catch (e) {
+                await page.keyboard.type(message);
+              }
+              await page.waitForTimeout(300);
+              await takeDebugScreenshot(page, `message-typed-${targetPhone}`);
             }
           } else {
             // Just text message
             console.log(`   Typing message...`);
             await messageInput.click();
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(300);
             await messageInput.fill(message);
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(300);
+            await takeDebugScreenshot(page, `text-message-typed-${targetPhone}`);
           }
           
           await takeDebugScreenshot(page, `send-native-before-send-${targetPhone}`);
@@ -577,7 +783,7 @@ app.post('/api/send-messages', async (req, res) => {
           // Press Enter to send
           console.log(`   Sending...`);
           await page.keyboard.press('Enter');
-          await page.waitForTimeout(2000);
+          await waitForMessageSent(page);
           
           await takeDebugScreenshot(page, `send-native-after-send-${targetPhone}`);
 
@@ -602,13 +808,13 @@ app.post('/api/send-messages', async (req, res) => {
           
           await takeDebugScreenshot(page, `send-fallback-after-goto-${targetPhone}`);
 
-          // Wait for WhatsApp Web to process and load
-          await page.waitForTimeout(2000);
+          // Wait for WhatsApp Web to fully load!
+          await page.waitForLoadState('networkidle', { timeout: 20000 });
           
           // Try closing popups multiple times
           for (let i = 0; i < 3; i++) {
             const closed = await closePopups(page);
-            if (closed) await page.waitForTimeout(1000);
+            if (closed) await page.waitForTimeout(500);
           }
           
           await takeDebugScreenshot(page, `send-fallback-after-popup-close-${targetPhone}`);
@@ -658,45 +864,120 @@ app.post('/api/send-messages', async (req, res) => {
 
           // Handle attachment if present
           if (attachment) {
-            const fullPath = path.resolve(__dirname, attachment);
-            if (!fs.existsSync(fullPath)) {
-              results.push({ phone: targetPhone, success: false, error: 'File not found' });
-              console.log(`❌ File not found: ${fullPath}`);
-              continue;
+            // Download only if not already downloaded
+            if (!attachmentPath) {
+              if (attachment.startsWith('http://') || attachment.startsWith('https://')) {
+                console.log(`   🌐 Downloading file from URL: ${attachment}`);
+                attachmentPath = await downloadFileFromUrl(attachment);
+                isTemporaryFile = true;
+                console.log(`   ✅ File downloaded to: ${attachmentPath}`);
+              } else {
+                // Local file
+                attachmentPath = path.resolve(__dirname, attachment);
+                if (!fs.existsSync(attachmentPath)) {
+                  results.push({ phone: targetPhone, success: false, error: 'File not found' });
+                  console.log(`❌ File not found: ${attachmentPath}`);
+                  continue;
+                }
+              }
             }
 
-            console.log(`   📁 Uploading file: ${fullPath}`);
-            const attachButton = page.locator('[data-testid="attach"]').first();
-            try {
-              await attachButton.click({ timeout: 10000 });
-            } catch {}
-
-            // Look for file input
-            const fileInput = page.locator('input[type="file"]').first();
-            try {
-              await fileInput.setInputFiles(fullPath, { timeout: 15000 });
-            } catch (e) {
-              console.log(`   File upload failed, trying alternative method...`);
+            console.log(`   📁 Uploading file: ${attachmentPath}`);
+            await takeDebugScreenshot(page, `before-attach-${targetPhone}`);
+            
+            // Step 1: Click Attach button
+            const attachButton = page.locator('button[aria-label="Attach"]').first();
+            await attachButton.waitFor({ state: 'visible', timeout: 10000 });
+            await attachButton.click({ timeout: 10000 });
+            console.log(`   ✅ Clicked Attach button`);
+            await page.waitForTimeout(1500);
+            await takeDebugScreenshot(page, `after-attach-click-${targetPhone}`);
+            
+            // Step 2: Find all buttons in menu and only click Document!
+            const menuButtons = page.locator('div[role="listitem"] button, button[role="menuitem"]');
+            const count = await menuButtons.count();
+            console.log(`   Found ${count} menu buttons`);
+            
+            let documentClicked = false;
+            for (let i = 0; i < count; i++) {
+              const text = await menuButtons.nth(i).innerText({ timeout: 2000 }).catch(() => '');
+              console.log(`   Button ${i} text: ${text}`);
+              if (text.includes('Document')) {
+                await menuButtons.nth(i).click({ timeout: 5000 });
+                documentClicked = true;
+                console.log(`   ✅ Clicked Document button!`);
+                break;
+              }
             }
-            await page.waitForTimeout(5000);
-
+            
+            if (!documentClicked) {
+              throw new Error('Could not find Document button in menu');
+            }
+            
+            await page.waitForTimeout(2500);
+            await takeDebugScreenshot(page, `after-document-click-${targetPhone}`);
+            
+            // Step 3: Find file input for DOCUMENTS (skip media ones)
+            let fileInputFound = false;
+            let fileInputs = await page.locator('input[type="file"]').all();
+            console.log(`   Found ${fileInputs.length} file inputs`);
+            
+            for (let i = fileInputs.length - 1; i >= 0; i--) {
+              try {
+                const accept = await fileInputs[i].getAttribute('accept');
+                console.log(`   File input ${i} accept: ${accept}`);
+                // Skip inputs that only accept media types!
+                if (accept && (accept.includes('image') || accept.includes('video') || accept.includes('audio'))) {
+                  console.log(`   Skipping media file input ${i}`);
+                  continue;
+                }
+                await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
+                fileInputFound = true;
+                console.log(`   ✅ Attached using file input #${i}`);
+                break;
+              } catch {}
+            }
+            
+            // If no non-media file input found, try all!
+            if (!fileInputFound) {
+              console.log(`   Trying all file inputs`);
+              for (let i = fileInputs.length - 1; i >= 0; i--) {
+                try {
+                  await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
+                  fileInputFound = true;
+                  console.log(`   ✅ Attached using file input #${i}`);
+                  break;
+                } catch {}
+              }
+            }
+            
+            if (!fileInputFound) {
+              throw new Error('Could not attach file');
+            }
+            
+            await page.waitForTimeout(3000);
+            await takeDebugScreenshot(page, `after-attach-${targetPhone}`);
+            
             // Add message if present
             if (message) {
               console.log(`   Typing message...`);
-              await messageInput.waitFor({ timeout: 10000 });
-              await messageInput.click();
-              await page.waitForTimeout(500);
-              await messageInput.fill(message);
-              await page.waitForTimeout(1000);
+              try {
+                await messageInput.fill(message);
+              } catch (e) {
+                await page.keyboard.type(message);
+              }
+              await page.waitForTimeout(300);
+              await takeDebugScreenshot(page, `message-typed-${targetPhone}`);
             }
           } else {
             // Just text message
             console.log(`   Typing message...`);
             await messageInput.waitFor({ timeout: 10000 });
             await messageInput.click();
-            await page.waitForTimeout(500);
+            await page.waitForTimeout(300);
             await messageInput.fill(message);
-            await page.waitForTimeout(1000);
+            await page.waitForTimeout(300);
+            await takeDebugScreenshot(page, `text-message-typed-${targetPhone}`);
           }
           
           await takeDebugScreenshot(page, `send-fallback-before-send-${targetPhone}`);
@@ -704,7 +985,7 @@ app.post('/api/send-messages', async (req, res) => {
           // Press Enter to send
           console.log(`   Sending...`);
           await page.keyboard.press('Enter');
-          await page.waitForTimeout(4000);
+          await waitForMessageSent(page);
           
           await takeDebugScreenshot(page, `send-fallback-after-send-${targetPhone}`);
 
@@ -718,6 +999,16 @@ app.post('/api/send-messages', async (req, res) => {
           await takeDebugScreenshot(page, `send-error-${targetPhone}`);
         } catch {}
         results.push({ phone: targetPhone, success: false, error: err.message });
+      } finally {
+        // Clean up temporary file if it exists
+        if (isTemporaryFile && attachmentPath && fs.existsSync(attachmentPath)) {
+          try {
+            fs.unlinkSync(attachmentPath);
+            console.log(`   🗑️ Cleaned up temporary file: ${attachmentPath}`);
+          } catch (cleanErr) {
+            console.log(`   ⚠️ Failed to clean up temporary file: ${cleanErr.message}`);
+          }
+        }
       }
 
       // Add delay between messages to avoid being rate-limited
@@ -749,4 +1040,3 @@ app.post('/api/send-messages', async (req, res) => {
     console.log(`   - POST /api/send-messages: Send bulk messages`);
   });
 })();
-
