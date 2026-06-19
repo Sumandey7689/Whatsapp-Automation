@@ -5,11 +5,11 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./wa-session:/app/wa-session
+      - ./tokens:/app/tokens
       - ./contact.json:/app/contact.json
       - ./attachments:/app/attachments
-      - ./logs:/app/logs # Mount logs folder to host machine
-      # Don't mount entire /app - that overwrites the built files!
+      - ./logs:/app/logs
     stdin_open: true
     tty: true
     shm_size: "2gb"
+    restart: unless-stopped

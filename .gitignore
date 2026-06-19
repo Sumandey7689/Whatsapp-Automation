@@ -4,6 +4,10 @@ node_modules/
 
 # WhatsApp session (contains sensitive login data)
 wa-session/
+tokens/
+
+# Temporary files
+temp/
 
 # Debug screenshots
 *.png
@@ -13,6 +17,7 @@ error-*.png
 
 # Log files
 *.log
+logs/
 
 # Docker
 .dockerignore
