@@ -684,70 +684,99 @@ app.post('/api/send-messages', async (req, res) => {
             console.log(`   📁 Uploading file: ${attachmentPath}`);
             await takeDebugScreenshot(page, `before-attach-${targetPhone}`);
             
+            // Determine file type based on extension
+            const ext = path.extname(attachmentPath).toLowerCase();
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+            const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+            const isMedia = imageExtensions.includes(ext) || videoExtensions.includes(ext);
+            const targetButtonText = isMedia ? 'Photos & videos' : 'Document';
+            console.log(`   Detected file type: ${isMedia ? 'Media' : 'Document'}`);
+            
             // Step 1: Click Attach button
             const attachButton = page.locator('button[aria-label="Attach"]').first();
             await attachButton.waitFor({ state: 'visible', timeout: 10000 });
             await attachButton.click({ timeout: 10000 });
             console.log(`   ✅ Clicked Attach button`);
-            await page.waitForTimeout(1500);
+            await page.waitForTimeout(2500);
             await takeDebugScreenshot(page, `after-attach-click-${targetPhone}`);
             
-            // Step 2: Find all buttons in menu and only click Document!
+            // Step 2: Find and click the appropriate button in menu
             const menuButtons = page.locator('div[role="listitem"] button, button[role="menuitem"]');
             const count = await menuButtons.count();
             console.log(`   Found ${count} menu buttons`);
             
-            let documentClicked = false;
+            let buttonClicked = false;
             for (let i = 0; i < count; i++) {
               const text = await menuButtons.nth(i).innerText({ timeout: 2000 }).catch(() => '');
               console.log(`   Button ${i} text: ${text}`);
-              if (text.includes('Document')) {
+              if (text.toLowerCase().includes(targetButtonText.toLowerCase())) {
                 await menuButtons.nth(i).click({ timeout: 5000 });
-                documentClicked = true;
-                console.log(`   ✅ Clicked Document button!`);
+                buttonClicked = true;
+                console.log(`   ✅ Clicked ${targetButtonText} button!`);
                 break;
               }
             }
             
-            if (!documentClicked) {
-              throw new Error('Could not find Document button in menu');
+            if (!buttonClicked) {
+              throw new Error(`Could not find ${targetButtonText} button in menu`);
             }
             
             await page.waitForTimeout(2500);
-            await takeDebugScreenshot(page, `after-document-click-${targetPhone}`);
+            await takeDebugScreenshot(page, `after-${isMedia ? 'media' : 'document'}-click-${targetPhone}`);
             
-            // Step 3: Find file input for DOCUMENTS (skip media ones)
+            // Step 3: Find appropriate file input
             let fileInputFound = false;
             let fileInputs = await page.locator('input[type="file"]').all();
             console.log(`   Found ${fileInputs.length} file inputs`);
             
-            for (let i = fileInputs.length - 1; i >= 0; i--) {
-              try {
-                const accept = await fileInputs[i].getAttribute('accept');
-                console.log(`   File input ${i} accept: ${accept}`);
-                // Skip inputs that only accept media types!
-                if (accept && (accept.includes('image') || accept.includes('video') || accept.includes('audio'))) {
-                  console.log(`   Skipping media file input ${i}`);
-                  continue;
-                }
-                await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
-                fileInputFound = true;
-                console.log(`   ✅ Attached using file input #${i}`);
-                break;
-              } catch {}
-            }
+            // For media files: first try inputs that accept BOTH image AND video, then either
+            // For documents: skip media-only inputs
             
-            // If no non-media file input found, try all!
-            if (!fileInputFound) {
-              console.log(`   Trying all file inputs`);
+            let selectedInputIndex = -1;
+            
+            if (isMedia) {
+              // First pass: look for inputs that accept both image and video
               for (let i = fileInputs.length - 1; i >= 0; i--) {
                 try {
-                  await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
-                  fileInputFound = true;
-                  console.log(`   ✅ Attached using file input #${i}`);
-                  break;
+                  const accept = await fileInputs[i].getAttribute('accept');
+                  console.log(`   File input ${i} accept: ${accept}`);
+                  if (accept && accept.includes('image') && accept.includes('video')) {
+                    selectedInputIndex = i;
+                    break;
+                  }
                 } catch {}
               }
+              
+              // If no input found that accepts both, try any that accept image OR video
+              if (selectedInputIndex === -1) {
+                for (let i = fileInputs.length - 1; i >= 0; i--) {
+                  try {
+                    const accept = await fileInputs[i].getAttribute('accept');
+                    if (accept && (accept.includes('image') || accept.includes('video'))) {
+                      selectedInputIndex = i;
+                      break;
+                    }
+                  } catch {}
+                }
+              }
+            } else {
+              // For documents: skip inputs that are only for media/audio
+              for (let i = fileInputs.length - 1; i >= 0; i--) {
+                try {
+                  const accept = await fileInputs[i].getAttribute('accept');
+                  console.log(`   File input ${i} accept: ${accept}`);
+                  if (!accept || (!accept.includes('image') && !accept.includes('video') && !accept.includes('audio'))) {
+                    selectedInputIndex = i;
+                    break;
+                  }
+                } catch {}
+              }
+            }
+            
+            if (selectedInputIndex !== -1) {
+              await fileInputs[selectedInputIndex].setInputFiles(attachmentPath, { timeout: 15000 });
+              fileInputFound = true;
+              console.log(`   ✅ Attached using file input #${selectedInputIndex}`);
             }
             
             if (!fileInputFound) {
@@ -885,70 +914,99 @@ app.post('/api/send-messages', async (req, res) => {
             console.log(`   📁 Uploading file: ${attachmentPath}`);
             await takeDebugScreenshot(page, `before-attach-${targetPhone}`);
             
+            // Determine file type based on extension
+            const ext = path.extname(attachmentPath).toLowerCase();
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+            const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+            const isMedia = imageExtensions.includes(ext) || videoExtensions.includes(ext);
+            const targetButtonText = isMedia ? 'Photos & videos' : 'Document';
+            console.log(`   Detected file type: ${isMedia ? 'Media' : 'Document'}`);
+            
             // Step 1: Click Attach button
             const attachButton = page.locator('button[aria-label="Attach"]').first();
             await attachButton.waitFor({ state: 'visible', timeout: 10000 });
             await attachButton.click({ timeout: 10000 });
             console.log(`   ✅ Clicked Attach button`);
-            await page.waitForTimeout(1500);
+            await page.waitForTimeout(2500);
             await takeDebugScreenshot(page, `after-attach-click-${targetPhone}`);
             
-            // Step 2: Find all buttons in menu and only click Document!
+            // Step 2: Find and click the appropriate button in menu
             const menuButtons = page.locator('div[role="listitem"] button, button[role="menuitem"]');
             const count = await menuButtons.count();
             console.log(`   Found ${count} menu buttons`);
             
-            let documentClicked = false;
+            let buttonClicked = false;
             for (let i = 0; i < count; i++) {
               const text = await menuButtons.nth(i).innerText({ timeout: 2000 }).catch(() => '');
               console.log(`   Button ${i} text: ${text}`);
-              if (text.includes('Document')) {
+              if (text.toLowerCase().includes(targetButtonText.toLowerCase())) {
                 await menuButtons.nth(i).click({ timeout: 5000 });
-                documentClicked = true;
-                console.log(`   ✅ Clicked Document button!`);
+                buttonClicked = true;
+                console.log(`   ✅ Clicked ${targetButtonText} button!`);
                 break;
               }
             }
             
-            if (!documentClicked) {
-              throw new Error('Could not find Document button in menu');
+            if (!buttonClicked) {
+              throw new Error(`Could not find ${targetButtonText} button in menu`);
             }
             
             await page.waitForTimeout(2500);
-            await takeDebugScreenshot(page, `after-document-click-${targetPhone}`);
+            await takeDebugScreenshot(page, `after-${isMedia ? 'media' : 'document'}-click-${targetPhone}`);
             
-            // Step 3: Find file input for DOCUMENTS (skip media ones)
+            // Step 3: Find appropriate file input
             let fileInputFound = false;
             let fileInputs = await page.locator('input[type="file"]').all();
             console.log(`   Found ${fileInputs.length} file inputs`);
             
-            for (let i = fileInputs.length - 1; i >= 0; i--) {
-              try {
-                const accept = await fileInputs[i].getAttribute('accept');
-                console.log(`   File input ${i} accept: ${accept}`);
-                // Skip inputs that only accept media types!
-                if (accept && (accept.includes('image') || accept.includes('video') || accept.includes('audio'))) {
-                  console.log(`   Skipping media file input ${i}`);
-                  continue;
-                }
-                await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
-                fileInputFound = true;
-                console.log(`   ✅ Attached using file input #${i}`);
-                break;
-              } catch {}
-            }
+            // For media files: first try inputs that accept BOTH image AND video, then either
+            // For documents: skip media-only inputs
             
-            // If no non-media file input found, try all!
-            if (!fileInputFound) {
-              console.log(`   Trying all file inputs`);
+            let selectedInputIndex = -1;
+            
+            if (isMedia) {
+              // First pass: look for inputs that accept both image and video
               for (let i = fileInputs.length - 1; i >= 0; i--) {
                 try {
-                  await fileInputs[i].setInputFiles(attachmentPath, { timeout: 15000 });
-                  fileInputFound = true;
-                  console.log(`   ✅ Attached using file input #${i}`);
-                  break;
+                  const accept = await fileInputs[i].getAttribute('accept');
+                  console.log(`   File input ${i} accept: ${accept}`);
+                  if (accept && accept.includes('image') && accept.includes('video')) {
+                    selectedInputIndex = i;
+                    break;
+                  }
                 } catch {}
               }
+              
+              // If no input found that accepts both, try any that accept image OR video
+              if (selectedInputIndex === -1) {
+                for (let i = fileInputs.length - 1; i >= 0; i--) {
+                  try {
+                    const accept = await fileInputs[i].getAttribute('accept');
+                    if (accept && (accept.includes('image') || accept.includes('video'))) {
+                      selectedInputIndex = i;
+                      break;
+                    }
+                  } catch {}
+                }
+              }
+            } else {
+              // For documents: skip inputs that are only for media/audio
+              for (let i = fileInputs.length - 1; i >= 0; i--) {
+                try {
+                  const accept = await fileInputs[i].getAttribute('accept');
+                  console.log(`   File input ${i} accept: ${accept}`);
+                  if (!accept || (!accept.includes('image') && !accept.includes('video') && !accept.includes('audio'))) {
+                    selectedInputIndex = i;
+                    break;
+                  }
+                } catch {}
+              }
+            }
+            
+            if (selectedInputIndex !== -1) {
+              await fileInputs[selectedInputIndex].setInputFiles(attachmentPath, { timeout: 15000 });
+              fileInputFound = true;
+              console.log(`   ✅ Attached using file input #${selectedInputIndex}`);
             }
             
             if (!fileInputFound) {
