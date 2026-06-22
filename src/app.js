@@ -3,6 +3,8 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const whatsappService = require('./services/whatsapp');
+const redisService = require('./services/redis');
+const messageQueue = require('./services/queue');
 const authRoutes = require('./routes/auth');
 const messageRoutes = require('./routes/messages');
 
@@ -16,13 +18,21 @@ const attachmentsDir = path.join(__dirname, '..', 'attachments');
 const tempDir = path.join(__dirname, '..', 'temp');
 [logsDir, attachmentsDir, tempDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, {
-      recursive: true
-    });
+    fs.mkdirSync(dir, { recursive: true });
   }
 });
 
-whatsappService.init();
+async function initServices() {
+  try {
+    await redisService.connect();
+    whatsappService.init();
+    await messageQueue.startWorker();
+  } catch (error) {
+    console.error('Error initializing services:', error);
+  }
+}
+
+initServices();
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'index.html'));

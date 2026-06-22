@@ -6,6 +6,8 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "@wppconnect-team/wppconnect": "^2.2.1"
+    "@wppconnect-team/wppconnect": "^2.2.1",
+    "redis": "^6.0.0",
+    "bullmq": "^5.34.1"
   }
 }
