@@ -1,13 +1,38 @@
 const express = require('express');
+const { tokenStore } = require('./auth');
 const whatsappService = require('../services/whatsapp');
 const messageQueue = require('../services/queue');
 
 const router = express.Router();
 
-router.post('/send-messages', async (req, res) => {
-  const { isReady } = whatsappService.getStatus();
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Token required'
+    });
+  }
+
+  const tokenData = tokenStore[token];
+  if (!tokenData) {
+    return res.status(403).json({
+      success: false,
+      message: 'Invalid token'
+    });
+  }
+
+  req.tokenData = tokenData;
+  next();
+}
+
+router.post('/send-messages', authenticateToken, async (req, res) => {
+  const { tokenData } = req;
+  const session = whatsappService.getSession(tokenData.sessionName);
   
-  if (!isReady) {
+  if (!session.isReady) {
     return res.status(401).json({
       success: false,
       message: 'Not logged in'
@@ -23,7 +48,7 @@ router.post('/send-messages', async (req, res) => {
   }
 
   try {
-    const jobs = await messageQueue.addJobs(contacts);
+    const jobs = await messageQueue.addJobs(contacts, tokenData.token);
     
     return res.json({
       success: true,

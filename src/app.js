@@ -5,7 +5,7 @@ const path = require('path');
 const whatsappService = require('./services/whatsapp');
 const redisService = require('./services/redis');
 const messageQueue = require('./services/queue');
-const authRoutes = require('./routes/auth');
+const { router: authRoutes, tokenStore } = require('./routes/auth');
 const messageRoutes = require('./routes/messages');
 
 const app = express();
@@ -25,8 +25,7 @@ const tempDir = path.join(__dirname, '..', 'temp');
 async function initServices() {
   try {
     await redisService.connect();
-    whatsappService.init();
-    await messageQueue.startWorker();
+    await messageQueue.startWorker(tokenStore, whatsappService);
   } catch (error) {
     console.error('Error initializing services:', error);
   }
@@ -44,8 +43,8 @@ app.use('/api', messageRoutes);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
   console.log(`   APIs available:`);
-  console.log(`   - POST /api/login-qr    : Get QR code for login`);
-  console.log(`   - POST /api/login-status: Check login status`);
-  console.log(`   - POST /api/logout      : Log out of WhatsApp`);
-  console.log(`   - POST /api/send-messages: Send bulk messages`);
+  console.log(`   - POST /api/login       : Login with mobile number`);
+  console.log(`   - POST /api/login-status: Check login status (needs token)`);
+  console.log(`   - POST /api/logout      : Log out (needs token)`);
+  console.log(`   - POST /api/send-messages: Send bulk messages (needs token)`);
 });

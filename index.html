@@ -139,6 +139,63 @@
             color: #cbd5e1;
         }
         
+        .login-form {
+            margin-bottom: 20px;
+        }
+        
+        .input-field {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #f1f5f9;
+            font-size: 15px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+        
+        .input-field:focus {
+            border-color: rgba(16, 185, 129, 0.5);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+        
+        .input-field::placeholder {
+            color: #64748b;
+        }
+        
+        .btn-login {
+            margin-top: 16px;
+            width: 100%;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+        
+        .btn-login:active {
+            transform: translateY(0);
+        }
+        
+        .btn-login:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
         .qr-wrapper {
             display: none;
             text-align: center;
@@ -226,6 +283,34 @@
             line-height: 1.5;
         }
         
+        .token-display {
+            display: none;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 16px;
+            word-break: break-all;
+        }
+        
+        .token-display.active {
+            display: block;
+        }
+        
+        .token-label {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .token-value {
+            font-size: 13px;
+            color: #10b981;
+            font-family: 'Courier New', monospace;
+        }
+        
         .logged-in-view {
             display: none;
             margin-top: 15px;
@@ -273,6 +358,26 @@
             margin-bottom: 24px;
         }
         
+        .btn-logout {
+            width: 100%;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        
+        .btn-logout:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+        
         .refresh-info {
             text-align: center;
             margin-top: 16px;
@@ -295,27 +400,6 @@
             50% { opacity: 0.3; }
         }
         
-        .status-dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-        
-        .status-dot.checking {
-            background: #fbbf24;
-            animation: pulse 1s ease-in-out infinite;
-        }
-        
-        .status-dot.connected {
-            background: #10b981;
-        }
-        
-        .status-dot.disconnected {
-            background: #ef4444;
-        }
-        
         .error-message {
             display: none;
             background: rgba(239, 68, 68, 0.1);
@@ -330,31 +414,6 @@
         
         .error-message.active {
             display: block;
-        }
-        
-        .btn-refresh {
-            margin-top: 20px;
-            width: 100%;
-            padding: 14px 24px;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            border: none;
-            border-radius: 12px;
-            color: white;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-family: 'Inter', sans-serif;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-        }
-        
-        .btn-refresh:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
-        }
-        
-        .btn-refresh:active {
-            transform: translateY(0);
         }
         
         .footer {
@@ -390,7 +449,17 @@
             <div class="status-card">
                 <div class="status-indicator checking" id="statusIndicator">
                     <span class="status-dot checking" id="statusDot"></span>
-                    <span class="status-text" id="statusText">Checking status...</span>
+                    <span class="status-text" id="statusText">Enter number to login</span>
+                </div>
+                
+                <div class="login-form" id="loginForm">
+                    <input 
+                        type="text" 
+                        id="phoneInput" 
+                        class="input-field" 
+                        placeholder="Enter phone number (e.g., 919999999999)"
+                    >
+                    <button class="btn-login" id="loginBtn">Login</button>
                 </div>
                 
                 <div class="qr-wrapper" id="qrWrapper">
@@ -402,6 +471,11 @@
                     <p class="qr-hint">Scan with WhatsApp to login<br>Open WhatsApp → Settings → Linked Devices → Link a Device</p>
                 </div>
                 
+                <div class="token-display" id="tokenDisplay">
+                    <div class="token-label">Your API Token</div>
+                    <div class="token-value" id="tokenValue"></div>
+                </div>
+                
                 <div class="logged-in-view" id="loggedInView">
                     <div class="success-icon">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -410,17 +484,14 @@
                     </div>
                     <h3 class="logged-in-title">Connected Successfully!</h3>
                     <p class="logged-in-text">Your WhatsApp is now linked. You can use the API to send messages.</p>
+                    <button class="btn-logout" id="logoutBtn">Logout</button>
                 </div>
                 
                 <div class="error-message" id="errorMessage">
                     <span id="errorText">Failed to connect. Please try again.</span>
                 </div>
                 
-                <button class="btn-refresh" id="refreshBtn" style="display: none;">
-                    Refresh QR Code
-                </button>
-                
-                <div class="refresh-info">
+                <div class="refresh-info" id="refreshInfo" style="display: none;">
                     <span class="refresh-dot"></span>
                     Auto-checking every 5 seconds
                 </div>
@@ -433,76 +504,137 @@
     </div>
     
     <script>
+        let currentToken = null;
         let isLoggedIn = false;
+        let checkInterval = null;
         
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
         const statusIndicator = document.getElementById('statusIndicator');
+        const loginForm = document.getElementById('loginForm');
+        const phoneInput = document.getElementById('phoneInput');
+        const loginBtn = document.getElementById('loginBtn');
         const qrWrapper = document.getElementById('qrWrapper');
         const qrPlaceholder = document.getElementById('qrPlaceholder');
         const qrImage = document.getElementById('qrImage');
+        const tokenDisplay = document.getElementById('tokenDisplay');
+        const tokenValue = document.getElementById('tokenValue');
         const loggedInView = document.getElementById('loggedInView');
+        const logoutBtn = document.getElementById('logoutBtn');
         const errorMessage = document.getElementById('errorMessage');
         const errorText = document.getElementById('errorText');
-        const refreshBtn = document.getElementById('refreshBtn');
+        const refreshInfo = document.getElementById('refreshInfo');
         
-        async function checkLoginStatus() {
+        loginBtn.addEventListener('click', async () => {
+            const number = phoneInput.value.trim();
+            if (!number) {
+                handleError('Please enter a phone number');
+                return;
+            }
+            
             try {
                 errorMessage.classList.remove('active');
+                loginBtn.disabled = true;
+                loginBtn.textContent = 'Logging in...';
                 
-                // First check login status
-                const statusResponse = await fetch('/api/login-status', {
+                const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({ number })
                 });
                 
-                const statusData = await statusResponse.json();
+                const data = await response.json();
                 
-                if (statusData.loggedIn) {
-                    handleLoggedIn();
-                    return;
+                if (data.success) {
+                    currentToken = data.token;
+                    tokenValue.textContent = currentToken;
+                    tokenDisplay.classList.add('active');
+                    loginForm.style.display = 'none';
+                    
+                    if (data.isReady) {
+                        handleLoggedIn();
+                    } else if (data.qrCode) {
+                        handleLoggedOut();
+                        qrImage.src = data.qrCode;
+                        qrPlaceholder.classList.remove('loading');
+                        refreshInfo.style.display = 'block';
+                        
+                        checkInterval = setInterval(checkLoginStatus, 5000);
+                    } else {
+                        handleLoggedOut();
+                        qrPlaceholder.classList.add('loading');
+                        refreshInfo.style.display = 'block';
+                        
+                        checkInterval = setInterval(checkLoginStatus, 5000);
+                    }
+                } else {
+                    handleError(data.message || 'Login failed');
                 }
-                
-                // If not logged in, get QR code
-                handleLoggedOut();
-                await getQRCode();
-                
             } catch (error) {
                 console.error('Error:', error);
                 handleError('Connection error. Make sure the bot is running.');
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Login';
             }
-        }
+        });
         
-        async function getQRCode() {
+        async function checkLoginStatus() {
             try {
-                const qrResponse = await fetch('/api/login-qr', {
+                if (!currentToken) return;
+                
+                const response = await fetch('/api/login-status', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
                     }
                 });
                 
-                const qrData = await qrResponse.json();
+                const data = await response.json();
                 
-                if (qrData.loggedIn) {
+                if (data.loggedIn) {
                     handleLoggedIn();
-                    return;
-                }
-                
-                if (qrData.qrCode) {
-                    qrImage.src = qrData.qrCode;
+                } else if (data.qrCode) {
+                    qrImage.src = data.qrCode;
                     qrPlaceholder.classList.remove('loading');
-                    refreshBtn.style.display = 'block';
-                } else {
-                    qrPlaceholder.classList.add('loading');
                 }
-                
             } catch (error) {
-                console.error('Error getting QR code:', error);
+                console.error('Error checking status:', error);
             }
         }
+        
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                if (!currentToken) return;
+                
+                await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
+                });
+                
+                if (checkInterval) {
+                    clearInterval(checkInterval);
+                }
+                
+                currentToken = null;
+                isLoggedIn = false;
+                loginForm.style.display = 'block';
+                qrWrapper.classList.remove('active');
+                tokenDisplay.classList.remove('active');
+                loggedInView.classList.remove('active');
+                refreshInfo.style.display = 'none';
+                statusIndicator.className = 'status-indicator checking';
+                statusDot.className = 'status-dot checking';
+                statusText.textContent = 'Enter number to login';
+            } catch (error) {
+                console.error('Error logging out:', error);
+            }
+        });
         
         function handleLoggedIn() {
             isLoggedIn = true;
@@ -514,7 +646,7 @@
             qrWrapper.classList.remove('active');
             loggedInView.classList.add('active');
             errorMessage.classList.remove('active');
-            refreshBtn.style.display = 'none';
+            refreshInfo.style.display = 'none';
         }
         
         function handleLoggedOut() {
@@ -526,7 +658,6 @@
             
             qrWrapper.classList.add('active');
             loggedInView.classList.remove('active');
-            refreshBtn.style.display = 'block';
         }
         
         function handleError(message) {
@@ -536,17 +667,6 @@
             statusDot.className = 'status-dot disconnected';
             statusText.textContent = 'Error';
         }
-        
-        refreshBtn.addEventListener('click', () => {
-            qrPlaceholder.classList.add('loading');
-            getQRCode();
-        });
-        
-        // Initial check
-        checkLoginStatus();
-        
-        // Check every 5 seconds
-        setInterval(checkLoginStatus, 5000);
     </script>
 </body>
 </html>

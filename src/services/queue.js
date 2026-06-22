@@ -2,7 +2,6 @@ const { Queue, Worker } = require('bullmq');
 const fs = require('fs');
 const path = require('path');
 const redisService = require('./redis');
-const whatsappService = require('./whatsapp');
 const { downloadFileFromUrl } = require('../utils/download');
 
 const QUEUE_NAME = 'whatsapp-messages';
@@ -14,19 +13,24 @@ class MessageQueueService {
   constructor() {
     this.queue = new Queue(QUEUE_NAME, { connection });
     this.worker = null;
+    this.tokenStore = null;
+    this.whatsappService = null;
   }
 
-  async addJobs(jobs) {
+  async addJobs(jobs, token) {
     return this.queue.addBulk(
       jobs.map((job, index) => ({
         name: 'send-message',
-        data: job,
+        data: { ...job, token },
         opts: { delay: index * 1000 }
       }))
     );
   }
 
-  async startWorker() {
+  async startWorker(tokenStore, whatsappService) {
+    this.tokenStore = tokenStore;
+    this.whatsappService = whatsappService;
+
     if (this.worker) {
       return;
     }
@@ -51,19 +55,25 @@ class MessageQueueService {
   }
 
   async processMessage(data) {
-    const { isReady, client } = whatsappService.getStatus();
-    const tempDir = path.join(__dirname, '..', '..', 'temp');
-    
-    if (!isReady || !client) {
+    const { token, phone, message, attachment } = data;
+
+    const tokenData = this.tokenStore[token];
+    if (!tokenData) {
+      throw new Error('Invalid token');
+    }
+
+    const session = this.whatsappService.getSession(tokenData.sessionName);
+    if (!session.isReady || !session.client) {
       throw new Error('WhatsApp client not ready');
     }
 
-    let { phone, message, attachment } = data;
-    phone = phone.replace(/\D/g, '');
-    if (phone.length === 10) {
-      phone = '91' + phone;
+    const tempDir = path.join(__dirname, '..', '..', 'temp');
+    
+    let cleanedPhone = phone.replace(/\D/g, '');
+    if (cleanedPhone.length === 10) {
+      cleanedPhone = '91' + cleanedPhone;
     }
-    const chatId = `${phone}@c.us`;
+    const chatId = `${cleanedPhone}@c.us`;
 
     let attachmentPath = null;
     let isTemporaryFile = false;
@@ -96,16 +106,16 @@ class MessageQueueService {
       const isMedia = imageExtensions.includes(ext) || videoExtensions.includes(ext);
 
       if (isMedia) {
-        await client.sendImage(chatId, attachmentPath, path.basename(attachmentPath), message);
+        await session.client.sendImage(chatId, attachmentPath, path.basename(attachmentPath), message);
       } else {
-        await client.sendFile(chatId, attachmentPath, path.basename(attachmentPath), message);
+        await session.client.sendFile(chatId, attachmentPath, path.basename(attachmentPath), message);
       }
 
       if (isTemporaryFile && attachmentPath && fs.existsSync(attachmentPath)) {
         // Don't delete cached files
       }
     } else {
-      await client.sendText(chatId, message);
+      await session.client.sendText(chatId, message);
     }
 
     return { phone, success: true };
