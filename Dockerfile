@@ -33,5 +33,8 @@ COPY . .
 # Create required directories
 RUN mkdir -p /app/tokens /app/logs /app/attachments /app/temp
 
-# Run the application
-CMD ["sh", "-c", "xvfb-run -a node web.js"]
+# Make start script executable
+RUN chmod +x /app/start.sh
+
+# Run the application with cleanup
+CMD ["sh", "-c", "/app/start.sh"]
