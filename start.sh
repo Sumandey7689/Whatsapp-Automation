@@ -23,4 +23,4 @@ which chromium
 
 echo "Starting application..."
 
-exec xvfb-run -a node web.js
+exec xvfb-run -a node src/app.js
