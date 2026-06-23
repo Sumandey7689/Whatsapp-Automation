@@ -6,7 +6,43 @@ class RedisService {
     this.client = null;
     this.connected = false;
     this.fallback = fallbackCache;
-    this.clientCreated = false;
+    this._redisChecked = false;
+    this._redisAvailable = false;
+  }
+
+  async checkRedisAvailability() {
+    if (this._redisChecked) {
+      return this._redisAvailable;
+    }
+
+    let testClient = null;
+    try {
+      testClient = redis.createClient({
+        url: process.env.REDIS_URL || 'redis://redis:6379',
+        socket: {
+          reconnectStrategy: false,
+          connectTimeout: 1500
+        }
+      });
+
+      // Suppress errors during test
+      testClient.on('error', () => {});
+
+      await testClient.connect();
+      await testClient.ping();
+      await testClient.quit();
+      
+      this._redisAvailable = true;
+      this._redisChecked = true;
+      return true;
+    } catch (error) {
+      if (testClient) {
+        try { await testClient.quit(); } catch {}
+      }
+      this._redisAvailable = false;
+      this._redisChecked = true;
+      return false;
+    }
   }
 
   async connect() {
@@ -14,16 +50,20 @@ class RedisService {
       return this.client;
     }
 
+    const isAvailable = await this.checkRedisAvailability();
+    if (!isAvailable) {
+      console.warn('Redis not available, using fallback cache');
+      return null;
+    }
+
     try {
       this.client = redis.createClient({
         url: process.env.REDIS_URL || 'redis://redis:6379',
         socket: {
-          reconnectStrategy: false,
+          reconnectStrategy: (retries) => Math.min(retries * 500, 5000),
           connectTimeout: 2000
         }
       });
-
-      this.clientCreated = true;
 
       let connected = false;
 

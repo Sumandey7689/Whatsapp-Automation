@@ -1,22 +1,14 @@
-const {
-  Queue,
-  Worker
-} = require('bullmq');
+const { Queue, Worker } = require('bullmq');
 const fs = require('fs');
 const path = require('path');
 const redisService = require('./redis');
 const fallbackQueue = require('./fallbackQueue');
-const {
-  downloadFileFromUrl
-} = require('../utils/download');
+const { downloadFileFromUrl } = require('../utils/download');
 
 const QUEUE_NAME = 'whatsapp-messages';
-const connection = process.env.REDIS_URL ? {
-  url: process.env.REDIS_URL
-} : {
-  host: 'redis',
-  port: 6379
-};
+const connection = process.env.REDIS_URL 
+  ? { url: process.env.REDIS_URL }
+  : { host: 'redis', port: 6379 };
 
 class MessageQueueService {
   constructor() {
@@ -29,15 +21,44 @@ class MessageQueueService {
   }
 
   async init() {
+    const redisAvailable = await redisService.checkRedisAvailability();
+    
+    if (!redisAvailable) {
+      this.useFallback = true;
+      console.warn('Redis not available, using fallback queue');
+      return;
+    }
+
     try {
-      this.queue = new Queue(QUEUE_NAME, {
-        connection
+      this.queue = new Queue(QUEUE_NAME, { 
+        connection,
+        defaultJobOptions: {
+          removeOnComplete: true,
+          removeOnFail: true
+        }
       });
+      
       this.useFallback = false;
       console.log('✅ Redis queue initialized');
     } catch (error) {
       console.warn('Redis queue initialization failed, using fallback queue:', error.message);
       this.useFallback = true;
+      await this.cleanupBullMQ();
+    }
+  }
+
+  async cleanupBullMQ() {
+    if (this.queue) {
+      try {
+        await this.queue.close();
+      } catch {}
+      this.queue = null;
+    }
+    if (this.worker) {
+      try {
+        await this.worker.close();
+      } catch {}
+      this.worker = null;
     }
   }
 
@@ -46,10 +67,7 @@ class MessageQueueService {
       return this.fallback.addBulk(
         jobs.map((job, index) => ({
           name: 'send-message',
-          data: {
-            ...job,
-            token
-          }
+          data: { ...job, token }
         }))
       );
     }
@@ -58,25 +76,18 @@ class MessageQueueService {
       return await this.queue.addBulk(
         jobs.map((job, index) => ({
           name: 'send-message',
-          data: {
-            ...job,
-            token
-          },
-          opts: {
-            delay: index * 1000
-          }
+          data: { ...job, token },
+          opts: { delay: index * 1000 }
         }))
       );
     } catch (error) {
       console.warn('Redis queue failed, switching to fallback queue:', error.message);
       this.useFallback = true;
+      await this.cleanupBullMQ();
       return this.fallback.addBulk(
         jobs.map((job, index) => ({
           name: 'send-message',
-          data: {
-            ...job,
-            token
-          }
+          data: { ...job, token }
         }))
       );
     }
@@ -102,9 +113,11 @@ class MessageQueueService {
         QUEUE_NAME,
         async (job) => {
           return this.processMessage(job.data);
-        }, {
-          connection,
-          concurrency: 1
+        },
+        { 
+          connection, 
+          concurrency: 1,
+          autorun: true
         }
       );
 
@@ -116,21 +129,24 @@ class MessageQueueService {
         console.error(`❌ Job ${job?.id} failed:`, err.message);
       });
 
+      this.worker.on('error', (err) => {
+        console.warn('Redis worker error, switching to fallback queue:', err.message);
+        this.useFallback = true;
+        this.cleanupBullMQ();
+        this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+      });
+
       console.log('📋 Message queue worker started');
     } catch (error) {
       console.warn('Redis worker failed, switching to fallback queue:', error.message);
       this.useFallback = true;
+      await this.cleanupBullMQ();
       this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
     }
   }
 
   async processMessage(data) {
-    const {
-      token,
-      phone,
-      message,
-      attachment
-    } = data;
+    const { token, phone, message, attachment } = data;
 
     const tokenData = this.tokenStore[token];
     if (!tokenData) {
@@ -143,7 +159,7 @@ class MessageQueueService {
     }
 
     const tempDir = path.join(__dirname, '..', '..', 'temp');
-
+    
     let cleanedPhone = phone.replace(/\D/g, '');
     if (cleanedPhone.length === 10) {
       cleanedPhone = '91' + cleanedPhone;
@@ -193,27 +209,11 @@ class MessageQueueService {
       await session.client.sendText(chatId, message);
     }
 
-    return {
-      phone,
-      success: true
-    };
+    return { phone, success: true };
   }
 
   async close() {
-    if (this.queue) {
-      try {
-        await this.queue.close();
-      } catch (error) {
-        console.warn('Queue close error:', error.message);
-      }
-    }
-    if (this.worker) {
-      try {
-        await this.worker.close();
-      } catch (error) {
-        console.warn('Worker close error:', error.message);
-      }
-    }
+    await this.cleanupBullMQ();
     await this.fallback.close();
   }
 }
