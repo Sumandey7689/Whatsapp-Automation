@@ -31,7 +31,7 @@ RUN npm install --only=production
 COPY . .
 
 # Create required directories
-RUN mkdir -p /app/tokens /app/logs /app/attachments /app/temp /app/profiles
+RUN mkdir -p /app/attachments /app/temp /app/profiles
 
 # Make start script executable
 RUN chmod +x /app/start.sh

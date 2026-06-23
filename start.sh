@@ -1,18 +1,33 @@
-#!/bin/sh
+﻿#!/bin/sh
 
 set -e
 
-PROFILE_DIR="/app/tokens/whatsapp-bot"
+# Clean up Chromium profile lock files for all sessions
+PROFILES_DIR="/app/profiles"
 
-if [ -d "$PROFILE_DIR" ]; then
-    echo "Cleaning up Chromium profile lock files in $PROFILE_DIR"
+echo "Cleaning up Chromium profile lock files..."
 
-    rm -f \
-        "$PROFILE_DIR/SingletonLock" \
-        "$PROFILE_DIR/SingletonSocket" \
-        "$PROFILE_DIR/SingletonCookie" \
-        "$PROFILE_DIR/lockfile" \
-        2>/dev/null || true
+# Clean profiles directory
+if [ -d "$PROFILES_DIR" ]; then
+    for SESSION_DIR in "$PROFILES_DIR"/*/; do
+        if [ -d "$SESSION_DIR" ]; then
+            rm -f \
+                "$SESSION_DIR/SingletonLock" \
+                "$SESSION_DIR/SingletonSocket" \
+                "$SESSION_DIR/SingletonCookie" \
+                "$SESSION_DIR/lockfile" \
+                2>/dev/null || true
+            # Also clean Default/Cache and other locks if present
+            if [ -d "$SESSION_DIR/Default" ]; then
+                rm -f \
+                    "$SESSION_DIR/Default/SingletonLock" \
+                    "$SESSION_DIR/Default/SingletonSocket" \
+                    "$SESSION_DIR/Default/SingletonCookie" \
+                    "$SESSION_DIR/Default/lockfile" \
+                    2>/dev/null || true
+            fi
+        fi
+    done
 fi
 
 echo "Node version:"

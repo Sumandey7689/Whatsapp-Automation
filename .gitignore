@@ -5,6 +5,7 @@ node_modules/
 # WhatsApp session (contains sensitive login data)
 wa-session/
 tokens/
+profiles/
 
 # Temporary files
 temp/

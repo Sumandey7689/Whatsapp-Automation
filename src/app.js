@@ -26,6 +26,7 @@ async function initServices() {
   try {
     await redisService.connect();
     await messageQueue.startWorker(tokenStore, whatsappService);
+    await whatsappService.restoreSessions();
   } catch (error) {
     console.error('Error initializing services:', error);
   }

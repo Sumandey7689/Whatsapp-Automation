@@ -14,11 +14,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./tokens:/app/tokens
       - ./profiles:/app/profiles
-      - ./contact.json:/app/contact.json
       - ./attachments:/app/attachments
-      - ./logs:/app/logs
     stdin_open: true
     tty: true
     shm_size: "2gb"

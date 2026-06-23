@@ -1,5 +1,6 @@
 const wppconnect = require('@wppconnect-team/wppconnect');
 const path = require('path');
+const fs = require('fs');
 const redisService = require('./redis');
 
 // Initialize Redis connection
@@ -14,6 +15,32 @@ class WhatsAppService {
   constructor() {
     this.clients = {};
     this.sessions = {};
+  }
+
+  async restoreSessions() {
+    const tokensDir = path.join(__dirname, '..', '..', 'profiles');
+    
+    if (!fs.existsSync(tokensDir)) {
+      console.log('Tokens directory not found, no sessions to restore');
+      return;
+    }
+
+    const sessionDirs = fs.readdirSync(tokensDir).filter(file => {
+      const fullPath = path.join(tokensDir, file);
+      return fs.statSync(fullPath).isDirectory();
+    });
+
+    console.log(`Found ${sessionDirs.length} sessions to restore:`, sessionDirs);
+
+    for (const sessionName of sessionDirs) {
+      try {
+        // Extract number from session name (session_1234567890)
+        const number = sessionName.replace('session_', '');
+        await this.startSession(sessionName, number);
+      } catch (err) {
+        console.error(`Failed to restore session ${sessionName}:`, err);
+      }
+    }
   }
 
   async startSession(sessionName, number) {
