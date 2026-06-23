@@ -1,61 +1,136 @@
-const { Queue, Worker } = require('bullmq');
+const {
+  Queue,
+  Worker
+} = require('bullmq');
 const fs = require('fs');
 const path = require('path');
 const redisService = require('./redis');
-const { downloadFileFromUrl } = require('../utils/download');
+const fallbackQueue = require('./fallbackQueue');
+const {
+  downloadFileFromUrl
+} = require('../utils/download');
 
 const QUEUE_NAME = 'whatsapp-messages';
-const connection = process.env.REDIS_URL 
-  ? { url: process.env.REDIS_URL }
-  : { host: 'redis', port: 6379 };
+const connection = process.env.REDIS_URL ? {
+  url: process.env.REDIS_URL
+} : {
+  host: 'redis',
+  port: 6379
+};
 
 class MessageQueueService {
   constructor() {
-    this.queue = new Queue(QUEUE_NAME, { connection });
+    this.queue = null;
     this.worker = null;
     this.tokenStore = null;
     this.whatsappService = null;
+    this.useFallback = false;
+    this.fallback = fallbackQueue;
+  }
+
+  async init() {
+    try {
+      this.queue = new Queue(QUEUE_NAME, {
+        connection
+      });
+      this.useFallback = false;
+      console.log('✅ Redis queue initialized');
+    } catch (error) {
+      console.warn('Redis queue initialization failed, using fallback queue:', error.message);
+      this.useFallback = true;
+    }
   }
 
   async addJobs(jobs, token) {
-    return this.queue.addBulk(
-      jobs.map((job, index) => ({
-        name: 'send-message',
-        data: { ...job, token },
-        opts: { delay: index * 1000 }
-      }))
-    );
+    if (this.useFallback || !this.queue) {
+      return this.fallback.addBulk(
+        jobs.map((job, index) => ({
+          name: 'send-message',
+          data: {
+            ...job,
+            token
+          }
+        }))
+      );
+    }
+
+    try {
+      return await this.queue.addBulk(
+        jobs.map((job, index) => ({
+          name: 'send-message',
+          data: {
+            ...job,
+            token
+          },
+          opts: {
+            delay: index * 1000
+          }
+        }))
+      );
+    } catch (error) {
+      console.warn('Redis queue failed, switching to fallback queue:', error.message);
+      this.useFallback = true;
+      return this.fallback.addBulk(
+        jobs.map((job, index) => ({
+          name: 'send-message',
+          data: {
+            ...job,
+            token
+          }
+        }))
+      );
+    }
   }
 
   async startWorker(tokenStore, whatsappService) {
     this.tokenStore = tokenStore;
     this.whatsappService = whatsappService;
 
+    await this.init();
+
+    if (this.useFallback) {
+      this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+      return;
+    }
+
     if (this.worker) {
       return;
     }
 
-    this.worker = new Worker(
-      QUEUE_NAME,
-      async (job) => {
-        return this.processMessage(job.data);
-      },
-      { connection, concurrency: 1 }
-    );
+    try {
+      this.worker = new Worker(
+        QUEUE_NAME,
+        async (job) => {
+          return this.processMessage(job.data);
+        }, {
+          connection,
+          concurrency: 1
+        }
+      );
 
-    this.worker.on('completed', (job) => {
-      console.log(`✅ Job ${job.id} completed for ${job.data.phone}`);
-    });
+      this.worker.on('completed', (job) => {
+        console.log(`✅ Job ${job.id} completed for ${job.data.phone}`);
+      });
 
-    this.worker.on('failed', (job, err) => {
-      console.error(`❌ Job ${job?.id} failed:`, err.message);
-    });
+      this.worker.on('failed', (job, err) => {
+        console.error(`❌ Job ${job?.id} failed:`, err.message);
+      });
 
-    console.log('📋 Message queue worker started');
+      console.log('📋 Message queue worker started');
+    } catch (error) {
+      console.warn('Redis worker failed, switching to fallback queue:', error.message);
+      this.useFallback = true;
+      this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+    }
   }
 
   async processMessage(data) {
-    const { token, phone, message, attachment } = data;
+    const {
+      token,
+      phone,
+      message,
+      attachment
+    } = data;
 
     const tokenData = this.tokenStore[token];
     if (!tokenData) {
@@ -68,7 +143,7 @@ class MessageQueueService {
     }
 
     const tempDir = path.join(__dirname, '..', '..', 'temp');
-    
+
     let cleanedPhone = phone.replace(/\D/g, '');
     if (cleanedPhone.length === 10) {
       cleanedPhone = '91' + cleanedPhone;
@@ -118,14 +193,28 @@ class MessageQueueService {
       await session.client.sendText(chatId, message);
     }
 
-    return { phone, success: true };
+    return {
+      phone,
+      success: true
+    };
   }
 
   async close() {
-    await this.queue.close();
-    if (this.worker) {
-      await this.worker.close();
+    if (this.queue) {
+      try {
+        await this.queue.close();
+      } catch (error) {
+        console.warn('Queue close error:', error.message);
+      }
     }
+    if (this.worker) {
+      try {
+        await this.worker.close();
+      } catch (error) {
+        console.warn('Worker close error:', error.message);
+      }
+    }
+    await this.fallback.close();
   }
 }
 
