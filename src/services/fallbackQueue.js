@@ -39,7 +39,7 @@ class FallbackQueue {
       const job = this.queue.shift();
       try {
         await this.processFn(job.data);
-        console.log(`✅ Job ${job.name} completed for ${job.data.phone}`);
+        console.log(`✅ Job ${job.id} completed for ${job.data.phone}`);
       } catch (error) {
         console.error(`❌ Job ${job.id} failed:`, error.message);
       }
