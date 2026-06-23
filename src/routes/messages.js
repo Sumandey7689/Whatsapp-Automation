@@ -53,7 +53,7 @@ router.post('/send-messages', authenticateToken, async (req, res) => {
     return res.json({
       success: true,
       message: `Sent ${contacts.length} messages`,
-      jobIds: jobs.map(job => job.id)
+      jobIds: (jobs || []).map(job => job.id)
     });
   } catch (error) {
     console.error('Error adding jobs to queue:', error);

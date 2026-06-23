@@ -6,14 +6,19 @@ class FallbackQueue {
     this.tokenStore = null;
     this.whatsappService = null;
     this.isProcessing = false;
+    this.jobCounter = 0;
   }
 
   addBulk(jobs) {
-    this.queue.push(...jobs);
+    const jobResults = jobs.map(job => {
+      const jobId = `${++this.jobCounter}`;
+      this.queue.push({ ...job, id: jobId });
+      return { id: jobId };
+    });
     if (!this.isProcessing) {
       this.processQueue();
     }
-    return Promise.resolve();
+    return Promise.resolve(jobResults);
   }
 
   startWorker(tokenStore, whatsappService, processFn) {
@@ -36,7 +41,7 @@ class FallbackQueue {
         await this.processFn(job.data);
         console.log(`✅ Job ${job.name} completed for ${job.data.phone}`);
       } catch (error) {
-        console.error(`❌ Job failed:`, error.message);
+        console.error(`❌ Job ${job.id} failed:`, error.message);
       }
     }
 
