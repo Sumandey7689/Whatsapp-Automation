@@ -6,6 +6,7 @@ class RedisService {
     this.client = null;
     this.connected = false;
     this.fallback = fallbackCache;
+    this.clientCreated = false;
   }
 
   async connect() {
@@ -17,18 +18,28 @@ class RedisService {
       this.client = redis.createClient({
         url: process.env.REDIS_URL || 'redis://redis:6379',
         socket: {
-          reconnectStrategy: (retries) => Math.min(retries * 50, 2000)
+          reconnectStrategy: false,
+          connectTimeout: 2000
         }
       });
 
+      this.clientCreated = true;
+
+      let connected = false;
+
       this.client.on('error', (err) => {
-        console.error('Redis Client Error:', err);
+        if (!connected) {
+          console.warn('Redis Client Error (will use fallback):', err.message);
+        } else {
+          console.error('Redis Client Error:', err);
+        }
         this.connected = false;
       });
 
       this.client.on('connect', () => {
         console.log('Redis Client Connected');
         this.connected = true;
+        connected = true;
       });
 
       this.client.on('ready', () => {
@@ -41,10 +52,12 @@ class RedisService {
 
       await this.client.connect();
       this.connected = true;
+      connected = true;
       return this.client;
     } catch (error) {
       console.warn('Redis connection failed, using fallback cache:', error.message);
       this.connected = false;
+      this.client = null;
       return null;
     }
   }
