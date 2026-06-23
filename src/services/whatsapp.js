@@ -62,6 +62,27 @@ class WhatsAppService {
     };
   }
 
+  async validateNumber(client, phone) {
+    try {
+      if (!client) {
+        return { valid: false, reason: 'No WhatsApp client available' };
+      }
+
+      const result = await client.checkNumberStatus(phone);
+      return {
+        valid: result.status === 200,
+        numberExists: result.numberExists,
+        result: result
+      };
+    } catch (err) {
+      console.error('Error validating number:', err);
+      return {
+        valid: false,
+        reason: 'Error checking number status'
+      };
+    }
+  }
+
   async logout(sessionName) {
     if (this.clients[sessionName]) {
       await this.clients[sessionName].logout();

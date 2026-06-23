@@ -1,5 +1,7 @@
 const express = require('express');
-const { tokenStore } = require('./auth');
+const {
+  tokenStore
+} = require('./auth');
 const whatsappService = require('../services/whatsapp');
 const messageQueue = require('../services/queue');
 
@@ -28,10 +30,18 @@ function authenticateToken(req, res, next) {
   next();
 }
 
+function validatePhoneFormat(phone) {
+  if (!phone || typeof phone !== 'string') return false;
+  const cleaned = phone.replace(/\D/g, '');
+  return cleaned.length >= 10;
+}
+
 router.post('/send-messages', authenticateToken, async (req, res) => {
-  const { tokenData } = req;
+  const {
+    tokenData
+  } = req;
   const session = whatsappService.getSession(tokenData.sessionName);
-  
+
   if (!session.isReady) {
     return res.status(401).json({
       success: false,
@@ -39,7 +49,9 @@ router.post('/send-messages', authenticateToken, async (req, res) => {
     });
   }
 
-  const { contacts } = req.body;
+  const {
+    contacts
+  } = req.body;
   if (!contacts || !Array.isArray(contacts)) {
     return res.status(400).json({
       success: false,
@@ -47,20 +59,64 @@ router.post('/send-messages', authenticateToken, async (req, res) => {
     });
   }
 
+  const client = session.client;
+  const validContacts = [];
+  const invalidNumbers = [];
+
+  // First validate format
+  for (let index = 0; index < contacts.length; index++) {
+    const contact = contacts[index];
+    if (validatePhoneFormat(contact.phone)) {
+      // Then validate with wppconnect
+      try {
+        const validation = await whatsappService.validateNumber(client, contact.phone);
+        if (validation.valid && validation.numberExists) {
+          validContacts.push(contact);
+        } else {
+          invalidNumbers.push({
+            index,
+            phone: contact.phone,
+            reason: validation.reason || 'Number does not exist on WhatsApp'
+          });
+        }
+      } catch (err) {
+        invalidNumbers.push({
+          index,
+          phone: contact.phone,
+          reason: 'Error checking number status'
+        });
+      }
+    } else {
+      invalidNumbers.push({
+        index,
+        phone: contact.phone,
+        reason: 'Invalid phone number format'
+      });
+    }
+  }
+
   try {
-    const jobs = await messageQueue.addJobs(contacts, tokenData.token);
-    
+    let jobs = [];
+    if (validContacts.length > 0) {
+      jobs = await messageQueue.addJobs(validContacts, tokenData.token);
+    }
+
     return res.json({
       success: true,
-      message: `Sent ${contacts.length} messages`,
-      jobIds: (jobs || []).map(job => job.id)
+      message: `${validContacts.length} message(s) queued successfully`,
+      jobIds: (jobs || []).map(job => job.id),
+      invalidNumbers: invalidNumbers,
+      totalContacts: contacts.length,
+      validCount: validContacts.length,
+      invalidCount: invalidNumbers.length
     });
   } catch (error) {
     console.error('Error adding jobs to queue:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to add messages to queue',
-      error: error.message
+      error: error.message,
+      invalidNumbers: invalidNumbers
     });
   }
 });
