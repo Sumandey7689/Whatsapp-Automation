@@ -15,6 +15,7 @@ services:
       - "3000:3000"
     volumes:
       - ./tokens:/app/tokens
+      - ./profiles:/app/profiles
       - ./contact.json:/app/contact.json
       - ./attachments:/app/attachments
       - ./logs:/app/logs

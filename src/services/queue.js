@@ -4,6 +4,7 @@ const path = require('path');
 const redisService = require('./redis');
 const fallbackQueue = require('./fallbackQueue');
 const { downloadFileFromUrl } = require('../utils/download');
+const { getTokenFromRedis, tokenStoreMap } = require('../routes/auth');
 
 const QUEUE_NAME = 'whatsapp-messages';
 const connection = process.env.REDIS_URL 
@@ -14,7 +15,6 @@ class MessageQueueService {
   constructor() {
     this.queue = null;
     this.worker = null;
-    this.tokenStore = null;
     this.whatsappService = null;
     this.useFallback = false;
     this.fallback = fallbackQueue;
@@ -93,14 +93,13 @@ class MessageQueueService {
     }
   }
 
-  async startWorker(tokenStore, whatsappService) {
-    this.tokenStore = tokenStore;
+  async startWorker(_tokenStore, whatsappService) {
     this.whatsappService = whatsappService;
 
     await this.init();
 
     if (this.useFallback) {
-      this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+      this.fallback.startWorker(_tokenStore, whatsappService, this.processMessage.bind(this));
       return;
     }
 
@@ -133,7 +132,7 @@ class MessageQueueService {
         console.warn('Redis worker error, switching to fallback queue:', err.message);
         this.useFallback = true;
         this.cleanupBullMQ();
-        this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+        this.fallback.startWorker(_tokenStore, whatsappService, this.processMessage.bind(this));
       });
 
       console.log('📋 Message queue worker started');
@@ -141,20 +140,30 @@ class MessageQueueService {
       console.warn('Redis worker failed, switching to fallback queue:', error.message);
       this.useFallback = true;
       await this.cleanupBullMQ();
-      this.fallback.startWorker(tokenStore, whatsappService, this.processMessage.bind(this));
+      this.fallback.startWorker(_tokenStore, whatsappService, this.processMessage.bind(this));
     }
   }
 
   async processMessage(data) {
     const { token, phone, message, attachment } = data;
 
-    const tokenData = this.tokenStore[token];
+    let tokenData = tokenStoreMap.get(token) || await getTokenFromRedis(token);
     if (!tokenData) {
       throw new Error('Invalid token');
     }
 
+    // Cache in memory
+    tokenStoreMap.set(token, tokenData);
+
     const session = this.whatsappService.getSession(tokenData.sessionName);
-    if (!session.isReady || !session.client) {
+    
+    // If session not running, start it
+    if (!session.client) {
+      await this.whatsappService.startSession(tokenData.sessionName, tokenData.number);
+    }
+
+    const updatedSession = this.whatsappService.getSession(tokenData.sessionName);
+    if (!updatedSession.isReady || !updatedSession.client) {
       throw new Error('WhatsApp client not ready');
     }
 
@@ -197,16 +206,16 @@ class MessageQueueService {
       const isMedia = imageExtensions.includes(ext) || videoExtensions.includes(ext);
 
       if (isMedia) {
-        await session.client.sendImage(chatId, attachmentPath, path.basename(attachmentPath), message);
+        await updatedSession.client.sendImage(chatId, attachmentPath, path.basename(attachmentPath), message);
       } else {
-        await session.client.sendFile(chatId, attachmentPath, path.basename(attachmentPath), message);
+        await updatedSession.client.sendFile(chatId, attachmentPath, path.basename(attachmentPath), message);
       }
 
       if (isTemporaryFile && attachmentPath && fs.existsSync(attachmentPath)) {
         // Don't delete cached files
       }
     } else {
-      await session.client.sendText(chatId, message);
+      await updatedSession.client.sendText(chatId, message);
     }
 
     return { phone, success: true };

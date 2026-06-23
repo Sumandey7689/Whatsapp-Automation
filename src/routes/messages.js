@@ -1,13 +1,14 @@
 const express = require('express');
 const {
-  tokenStore
+  getTokenFromRedis,
+  tokenStoreMap
 } = require('./auth');
 const whatsappService = require('../services/whatsapp');
 const messageQueue = require('../services/queue');
 
 const router = express.Router();
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -18,7 +19,7 @@ function authenticateToken(req, res, next) {
     });
   }
 
-  const tokenData = tokenStore[token];
+  let tokenData = tokenStoreMap.get(token) || await getTokenFromRedis(token);
   if (!tokenData) {
     return res.status(403).json({
       success: false,
@@ -36,7 +37,9 @@ function validatePhoneFormat(phone) {
   return cleaned.length >= 10;
 }
 
-router.post('/send-messages', authenticateToken, async (req, res) => {
+router.post('/send-messages', async (req, res, next) => {
+  await authenticateToken(req, res, next);
+}, async (req, res) => {
   const {
     tokenData
   } = req;

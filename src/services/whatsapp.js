@@ -1,5 +1,14 @@
 const wppconnect = require('@wppconnect-team/wppconnect');
 const path = require('path');
+const redisService = require('./redis');
+
+// Initialize Redis connection
+(async () => {
+  await redisService.connect();
+})();
+
+const CACHE_KEY_PREFIX = 'whatsapp:number:';
+const CACHE_TTL = 86400 * 7; // 7 days
 
 class WhatsAppService {
   constructor() {
@@ -65,20 +74,46 @@ class WhatsAppService {
   async validateNumber(client, phone) {
     try {
       if (!client) {
-        return { valid: false, reason: 'No WhatsApp client available' };
+        return {
+          valid: false,
+          reason: 'No WhatsApp client available'
+        };
       }
 
-      const result = await client.checkNumberStatus(phone);
-      return {
-        valid: result.status === 200,
+      let cleanedPhone = phone.replace(/\D/g, '');
+
+      if (cleanedPhone.length === 10) {
+        cleanedPhone = '91' + cleanedPhone;
+      }
+
+      const cacheKey = CACHE_KEY_PREFIX + cleanedPhone;
+      
+      // Check cache first
+      const cachedData = await redisService.get(cacheKey);
+      if (cachedData) {
+        console.log(`Using cached validation for ${cleanedPhone}`);
+        return JSON.parse(cachedData);
+      }
+
+      const chatId = `${cleanedPhone}@c.us`;
+      const result = await client.checkNumberStatus(chatId);
+      const validationResult = {
+        valid: result.numberExists,
         numberExists: result.numberExists,
-        result: result
+        wid: result.id?._serialized,
+        result
       };
+
+      // Cache the result
+      await redisService.set(cacheKey, JSON.stringify(validationResult), CACHE_TTL);
+
+      return validationResult;
     } catch (err) {
       console.error('Error validating number:', err);
+
       return {
         valid: false,
-        reason: 'Error checking number status'
+        reason: err.message
       };
     }
   }
