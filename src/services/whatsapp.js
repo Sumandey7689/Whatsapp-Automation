@@ -20,7 +20,7 @@ class WhatsAppService {
 
   async restoreSessions() {
     const tokensDir = path.join(__dirname, '..', '..', 'profiles');
-    
+
     if (!fs.existsSync(tokensDir)) {
       console.log('Tokens directory not found, no sessions to restore');
       return;
@@ -56,7 +56,8 @@ class WhatsAppService {
     const sessionData = {
       isReady: false,
       qrCodeBase64: null,
-      number
+      number,
+      status: null
     };
     this.sessions[sessionName] = sessionData;
 
@@ -76,6 +77,7 @@ class WhatsAppService {
           },
           statusFind: (statusSession) => {
             console.log(`Status for ${sessionName}:`, statusSession);
+            sessionData.status = statusSession;
             if (statusSession === 'inChat') {
               sessionData.isReady = true;
               sessionData.qrCodeBase64 = null;
@@ -126,7 +128,7 @@ class WhatsAppService {
       }
 
       const cacheKey = CACHE_KEY_PREFIX + cleanedPhone;
-      
+
       // Check cache first
       const cachedData = await redisService.get(cacheKey);
       if (cachedData) {
@@ -139,7 +141,7 @@ class WhatsAppService {
       const validationResult = {
         valid: result.numberExists,
         numberExists: result.numberExists,
-        wid: result.id?._serialized,
+        wid: result.id._serialized || '',
         result
       };
 
@@ -157,11 +159,62 @@ class WhatsAppService {
     }
   }
 
-  async logout(sessionName) {
-    if (this.clients[sessionName]) {
-      await this.clients[sessionName].logout();
-      delete this.clients[sessionName];
-      delete this.sessions[sessionName];
+  async logout(sessionName, number) {
+    try {
+      if (this.clients[sessionName]) {
+        try {
+          // Try to logout gracefully (ignore if context is already destroyed)
+          await this.clients[sessionName].logout().catch(() => {});
+          // Try to close the browser/page
+          if (this.clients[sessionName].page) {
+            await this.clients[sessionName].page.close().catch(() => {});
+          }
+          if (this.clients[sessionName].browser) {
+            await this.clients[sessionName].browser.close().catch(() => {});
+          }
+        } catch (err) {
+          console.log(`Cleanup error for ${sessionName}:`, err.message);
+        }
+        delete this.clients[sessionName];
+        delete this.sessions[sessionName];
+        delete this.sessionPromises[sessionName];
+      }
+
+      // Clean up session profile directory
+      const profilesDir = path.join(__dirname, '..', '..', 'profiles', sessionName);
+      if (fs.existsSync(profilesDir)) {
+        fs.rmSync(profilesDir, {
+          recursive: true,
+          force: true
+        });
+        console.log(`Deleted profile directory for ${sessionName}`);
+      }
+
+      // Clean up tokens directory (wppconnect stores tokens here)
+      const tokensDir = path.join(__dirname, '..', '..', 'tokens', sessionName);
+      if (fs.existsSync(tokensDir)) {
+        fs.rmSync(tokensDir, {
+          recursive: true,
+          force: true
+        });
+        console.log(`Deleted tokens directory for ${sessionName}`);
+      }
+
+      // Clean up number validation cache in Redis
+      if (number) {
+        let cleanedNumber = number.replace(/\D/g, '');
+        if (cleanedNumber.length === 10) {
+          cleanedNumber = '91' + cleanedNumber;
+        }
+        const cacheKey = CACHE_KEY_PREFIX + cleanedNumber;
+        await redisService.del(cacheKey);
+        console.log(`Deleted number validation cache for ${cleanedNumber}`);
+      }
+
+      console.log(`Successfully logged out ${sessionName}`);
+    } catch (err) {
+      console.error(`Logout error for ${sessionName}:`, err);
+      throw err;
     }
   }
 }

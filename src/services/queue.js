@@ -163,8 +163,8 @@ class MessageQueueService {
     }
 
     const updatedSession = this.whatsappService.getSession(tokenData.sessionName);
-    if (!updatedSession.isReady || !updatedSession.client) {
-      throw new Error('WhatsApp client not ready');
+    if (!updatedSession.isReady || !updatedSession.client || updatedSession.status !== 'inChat') {
+      throw new Error('WhatsApp client not ready or not in chat');
     }
 
     const tempDir = path.join(__dirname, '..', '..', 'temp');

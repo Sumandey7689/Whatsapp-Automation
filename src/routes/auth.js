@@ -170,7 +170,7 @@ router.post('/logout', async (req, res) => {
       });
     }
 
-    await whatsappService.logout(tokenData.sessionName);
+    await whatsappService.logout(tokenData.sessionName, tokenData.number);
     tokenStore.delete(token);
     numberToToken.delete(tokenData.number);
     await deleteTokenFromRedis(token, tokenData.number);

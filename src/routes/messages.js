@@ -45,10 +45,10 @@ router.post('/send-messages', async (req, res, next) => {
   } = req;
   const session = whatsappService.getSession(tokenData.sessionName);
 
-  if (!session.isReady) {
+  if (!session.isReady || session.status !== 'inChat') {
     return res.status(401).json({
       success: false,
-      message: 'Not logged in'
+      message: 'Not logged in or session not in chat'
     });
   }
 
