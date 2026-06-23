@@ -7,7 +7,7 @@ const { downloadFileFromUrl } = require('../utils/download');
 const QUEUE_NAME = 'whatsapp-messages';
 const connection = process.env.REDIS_URL 
   ? { url: process.env.REDIS_URL }
-  : { host: 'localhost', port: 6379 };
+  : { host: 'redis', port: 6379 };
 
 class MessageQueueService {
   constructor() {
