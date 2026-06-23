@@ -1,70 +1,177 @@
-# WhatsApp Bot Automation
+# Full Workflow Guide
 
-A premium, automated WhatsApp messaging bot with a beautiful UI, built with Playwright and Docker.
+This guide explains the complete workflow for using the WhatsApp Bot.
 
-## Features
+---
 
-- 🎨 Beautiful premium compact UI with real-time status
-- 📱 QR code login for easy authentication
-- 🚀 Send bulk messages to multiple contacts
-- 🔄 Automatic session keep-alive
-- ⚠️ Graceful session expiration handling
-- 🐳 Dockerized for easy deployment
-- 📊 Progress bar and status monitoring
-- 📸 Debugging screenshots
+## Prerequisites
 
-## Quick Start
-
-### Prerequisites
 - Docker and Docker Compose installed
-- Node.js (optional, for local development)
+- A WhatsApp account (to link as the bot)
 
-### Running with Docker
+---
 
-1. **Clone or navigate to the project directory**
-   ```bash
-   cd e:\Automation\Playwright
-   ```
+## Step 1: Start the Services
 
-2. **Start the bot**
-   ```bash
-   docker compose up -d
-   ```
+### 1.1 Navigate to the Project Directory
+```bash
+cd e:\Automation\Playwright
+```
 
-3. **Open the UI**
-   Go to `http://localhost:3000` in your browser
+### 1.2 Start Docker Compose
+```bash
+docker compose up -d
+```
 
-4. **Login with WhatsApp**
-   - Scan the QR code with your WhatsApp
-   - Open WhatsApp → Settings → Linked Devices → Link a Device
+This will start 2 containers:
+1. `whatsapp-redis`: Redis server for queue and cache
+2. `whatsapp-bot`: Main bot application (runs on port 3000)
 
-## API Endpoints
+### 1.3 Verify Containers are Running
+```bash
+docker compose ps
+```
 
-### POST /api/login-qr
-Get QR code for login or check current status.
+---
 
-**Response:**
+## Step 2: Authenticate (Login) with WhatsApp
+
+You have 2 options for logging in:
+
+### Option A: Using the Web UI
+1. Open your browser and go to `http://localhost:3000`
+2. Enter your WhatsApp number (e.g., `1234567890`) and click "Login"
+3. Wait for the QR code to appear
+4. Open WhatsApp on your phone → Settings → Linked Devices → Link a Device
+5. Scan the QR code
+6. Once logged in, you'll see "Status: Logged In"
+
+### Option B: Using the API
+
+#### 2.1 Request Login Token
+Send a POST request to `/api/login` with your phone number:
+```json
+POST http://localhost:3000/api/login
+Content-Type: application/json
+
+{
+  "number": "1234567890"
+}
+```
+
+**Response Example:**
 ```json
 {
   "success": true,
-  "loggedIn": false,
+  "token": "46acbfd8c1c123d48444f790107633260255fc6f9a3267e8f606702a37e70b66",
+  "number": "1234567890",
+  "isReady": false,
   "qrCode": "data:image/png;base64,..."
 }
 ```
 
-### POST /api/login-status
-Check if currently logged in.
+Save the `token` from the response — you'll need it for all authenticated requests!
 
-**Response:**
+#### 2.2 Check Login Status
+Use the token to check if you're logged in (or get a new QR code if needed):
+```json
+POST http://localhost:3000/api/login-status
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+**Response Example when Logged In:**
 ```json
 {
   "success": true,
-  "loggedIn": true
+  "loggedIn": true,
+  "qrCode": null
 }
 ```
 
-### POST /api/logout
-Log out and clear session.
+---
+
+## Step 3: Send Bulk Messages
+
+### 3.1 Prepare Your Contacts
+Create an array of contacts with `phone` and `message` (and optional `attachment`):
+```json
+{
+  "contacts": [
+    {
+      "phone": "917478699658",
+      "message": "Hello from WhatsApp Bot!",
+      "attachment": "https://example.com/image.jpg"
+    },
+    {
+      "phone": "911234567890",
+      "message": "Another message!"
+    }
+  ]
+}
+```
+
+### 3.2 Send via API
+```json
+POST http://localhost:3000/api/send-messages
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+
+{
+  "contacts": [
+    {
+      "phone": "910987456321",
+      "message": "Hello from WhatsApp Bot!"
+    },
+    {
+      "phone": "911234567890",
+      "message": "Hi there!"
+    }
+  ]
+}
+```
+
+**Response Example:**
+```json
+{
+  "success": true,
+  "message": "2 message(s) queued successfully",
+  "jobIds": ["1", "2"],
+  "invalidNumbers": [],
+  "totalContacts": 2,
+  "validCount": 2,
+  "invalidCount": 0
+}
+```
+
+---
+
+## Step 4: Monitor the Bot
+
+### 4.1 Check Bot Logs
+```bash
+docker logs -f whatsapp-bot
+```
+
+### 4.2 Check Redis Cache (Optional)
+To see what's in Redis:
+```bash
+# List all keys
+docker exec -it whatsapp-redis redis-cli KEYS "*"
+
+# View cached number validations
+docker exec -it whatsapp-redis redis-cli MGET "whatsapp:number:917478699658" "whatsapp:number:919002617469"
+```
+
+---
+
+## Step 5: Logout (When Done)
+
+### 5.1 Logout via API
+```json
+POST http://localhost:3000/api/logout
+Authorization: Bearer YOUR_TOKEN_HERE
+```
 
 **Response:**
 ```json
@@ -74,105 +181,38 @@ Log out and clear session.
 }
 ```
 
-### POST /api/send-messages
-Send bulk messages to multiple contacts.
+---
 
-**Request Body:**
-```json
-{
-  "contacts": [
-    {
-      "phone": "1234567890",
-      "message": "Hello from WhatsApp Bot!",
-      "attachment": "path/to/file.pdf"
-    }
-  ]
-}
-```
+## Troubleshooting & Maintenance
 
-**Response:**
-```json
-{
-  "success": true,
-  "results": [
-    {
-      "phone": "1234567890",
-      "success": true
-    }
-  ]
-}
-```
-
-## Project Structure
-
-```
-e:\Automation\Playwright\
-├── web.js              # Main bot application
-├── index.html          # Premium UI
-├── package.json        # Dependencies
-├── Dockerfile          # Docker configuration
-├── docker-compose.yml  # Compose configuration
-├── contact.json        # Contact list (optional)
-└── README.md           # This file
-```
-
-## Development
-
-### Local Development
-
-1. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-2. **Install Playwright browsers**
-   ```bash
-   npx playwright install chromium
-   ```
-
-3. **Run locally**
-   ```bash
-   node web.js
-   ```
-
-### Rebuilding the Docker Image
-
+### Clear Redis Cache
+If you need to delete cached data (like number validations):
 ```bash
-docker compose up -d --build
+# Delete specific number caches
+docker exec -it whatsapp-redis redis-cli DEL "whatsapp:number:919002617469"
+
+# Delete all number caches
+docker exec -it whatsapp-redis redis-cli --scan --pattern "whatsapp:number:*" | xargs docker exec -i whatsapp-redis redis-cli DEL
+
+# Clear ALL Redis data (including auth tokens and queue data)
+docker exec -it whatsapp-redis redis-cli FLUSHDB
 ```
 
-## Troubleshooting
-
-### Session Expires After Inactivity
-- Bot has built-in keep-alive mechanism
-- If session expires, UI will automatically show QR code for re-login
-
-### Can't Load Chat When Sending Messages
-- Make sure you're logged in
-- Check bot logs with: `docker compose logs -f whatsapp-bot`
-- Debug screenshots are saved to the container
-
-### Viewing Logs
+### Restart the Bot
+If the in-memory fallback cache needs to be cleared:
 ```bash
-docker compose logs -f whatsapp-bot
+docker compose restart whatsapp-bot
 ```
 
-### Stopping the Bot
+### Stop Everything
 ```bash
 docker compose down
 ```
 
-## Technologies Used
+---
 
-- **Playwright** - Browser automation
-- **Express.js** - Web server
-- **Docker** - Containerization
-- **WhatsApp Web** - Messaging platform
-
-## License
-
-MIT License - Feel free to use this project for personal or commercial purposes.
-
-## Disclaimer
-
-This project is for educational and automation purposes only. Please respect WhatsApp's terms of service and use responsibly.
+## Key Files & Directories
+- `e:\Automation\Playwright\profiles\`: Stores Chromium profiles for WhatsApp Web sessions
+- `e:\Automation\Playwright\tokens\`: (Not used in current version, but reserved)
+- `e:\Automation\Playwright\attachments\`: Stores downloaded attachments
+- `e:\Automation\Playwright\logs\`: Stores app logs
