@@ -15,6 +15,7 @@ class WhatsAppService {
   constructor() {
     this.clients = {};
     this.sessions = {};
+    this.sessionPromises = {}; // Track ongoing session start promises
   }
 
   async restoreSessions() {
@@ -48,6 +49,10 @@ class WhatsAppService {
       return this.clients[sessionName];
     }
 
+    if (this.sessionPromises[sessionName]) {
+      return this.sessionPromises[sessionName];
+    }
+
     const sessionData = {
       isReady: false,
       qrCodeBase64: null,
@@ -55,40 +60,47 @@ class WhatsAppService {
     };
     this.sessions[sessionName] = sessionData;
 
-    try {
-      const client = await wppconnect.create({
-        session: sessionName,
-        headless: true,
-        autoClose: 0,
-        folderNameToken: 'tokens',
-        puppeteerOptions: {
-          userDataDir: path.join(__dirname, '..', '..', 'profiles', sessionName)
-        },
-        catchQR: (base64Qr) => {
-          sessionData.qrCodeBase64 = base64Qr;
-          console.log(`QR Code received for ${sessionName}`);
-        },
-        statusFind: (statusSession) => {
-          console.log(`Status for ${sessionName}:`, statusSession);
-          if (statusSession === 'inChat') {
-            sessionData.isReady = true;
-            sessionData.qrCodeBase64 = null;
-          } else if (statusSession === 'notLogged' || statusSession === 'browserClose') {
-            sessionData.isReady = false;
-          }
-        },
-        browserArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-      });
+    const sessionPromise = (async () => {
+      try {
+        const client = await wppconnect.create({
+          session: sessionName,
+          headless: true,
+          autoClose: 0,
+          folderNameToken: 'tokens',
+          puppeteerOptions: {
+            userDataDir: path.join(__dirname, '..', '..', 'profiles', sessionName)
+          },
+          catchQR: (base64Qr) => {
+            sessionData.qrCodeBase64 = base64Qr;
+            console.log(`QR Code received for ${sessionName}`);
+          },
+          statusFind: (statusSession) => {
+            console.log(`Status for ${sessionName}:`, statusSession);
+            if (statusSession === 'inChat') {
+              sessionData.isReady = true;
+              sessionData.qrCodeBase64 = null;
+            } else if (statusSession === 'notLogged' || statusSession === 'browserClose') {
+              sessionData.isReady = false;
+            }
+          },
+          browserArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        });
 
-      this.clients[sessionName] = client;
-      sessionData.isReady = true;
-      console.log(`WhatsApp Ready for ${sessionName}`);
-      return client;
-    } catch (err) {
-      console.error(`Error initializing WhatsApp for ${sessionName}:`, err);
-      sessionData.isReady = false;
-      throw err;
-    }
+        this.clients[sessionName] = client;
+        sessionData.isReady = true;
+        console.log(`WhatsApp Ready for ${sessionName}`);
+        return client;
+      } catch (err) {
+        console.error(`Error initializing WhatsApp for ${sessionName}:`, err);
+        sessionData.isReady = false;
+        throw err;
+      } finally {
+        delete this.sessionPromises[sessionName];
+      }
+    })();
+
+    this.sessionPromises[sessionName] = sessionPromise;
+    return sessionPromise;
   }
 
   getSession(sessionName) {
