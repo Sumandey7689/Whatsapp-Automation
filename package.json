@@ -4,10 +4,11 @@
     "start": "node src/app.js"
   },
   "dependencies": {
+    "@wppconnect-team/wppconnect": "^2.2.1",
+    "bullmq": "^5.34.1",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "@wppconnect-team/wppconnect": "^2.2.1",
-    "redis": "^6.0.0",
-    "bullmq": "^5.34.1"
+    "multer": "^2.2.0",
+    "redis": "^6.0.0"
   }
 }

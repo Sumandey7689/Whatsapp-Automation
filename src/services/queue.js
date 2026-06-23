@@ -168,6 +168,10 @@ class MessageQueueService {
     }
 
     const tempDir = path.join(__dirname, '..', '..', 'temp');
+    // Ensure temp directory exists
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
     
     let cleanedPhone = phone.replace(/\D/g, '');
     if (cleanedPhone.length === 10) {
@@ -190,7 +194,36 @@ class MessageQueueService {
           console.log(`🌐 Downloading file from URL: ${attachment}`);
           attachmentPath = await downloadFileFromUrl(attachment, tempDir);
           isTemporaryFile = true;
+        } else if (attachment.startsWith('data:')) {
+          // Handle base64 data URL
+          console.log(`📄 Processing base64 attachment`);
+          const matches = attachment.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+)(;base64)?,(.*)$/);
+          if (!matches) {
+            throw new Error('Invalid base64 data URL');
+          }
+          
+          const mimeType = matches[1];
+          const base64Data = matches[3];
+          
+          // Determine file extension from mimeType
+          let ext = '.bin';
+          if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = '.jpg';
+          else if (mimeType.includes('png')) ext = '.png';
+          else if (mimeType.includes('gif')) ext = '.gif';
+          else if (mimeType.includes('webp')) ext = '.webp';
+          else if (mimeType.includes('mp4')) ext = '.mp4';
+          else if (mimeType.includes('pdf')) ext = '.pdf';
+          else if (mimeType.includes('zip')) ext = '.zip';
+          
+          // Generate unique filename
+          const filename = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}${ext}`;
+          attachmentPath = path.join(tempDir, filename);
+          
+          // Write base64 data to file
+          fs.writeFileSync(attachmentPath, base64Data, { encoding: 'base64' });
+          isTemporaryFile = true;
         } else {
+          // Assume it's a local file path
           attachmentPath = path.resolve(__dirname, '..', '..', attachment);
           if (!fs.existsSync(attachmentPath)) {
             throw new Error('File not found');
