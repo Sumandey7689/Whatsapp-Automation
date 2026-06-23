@@ -85,7 +85,18 @@ class WhatsAppService {
               sessionData.isReady = false;
             }
           },
-          browserArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+          browserArgs: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-sync',
+            '--metrics-recording-only',
+            '--mute-audio'
+          ]
         });
 
         this.clients[sessionName] = client;
